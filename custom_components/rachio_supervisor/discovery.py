@@ -75,10 +75,17 @@ def discover_linked_entities(
 ) -> LinkedRachioEntities:
     """Discover the relevant linked Rachio entities from the entity registry."""
     registry = er.async_get(hass)
+    def _entry_matches_config_entry(entry: er.RegistryEntry) -> bool:
+        """Return True when the registry row belongs to the linked Rachio entry."""
+        config_entry_ids = getattr(entry, "config_entry_ids", None)
+        if config_entry_ids is not None:
+            return rachio_config_entry_id in config_entry_ids
+        return getattr(entry, "config_entry_id", None) == rachio_config_entry_id
+
     entries = [
         entry
         for entry in registry.entities.values()
-        if rachio_config_entry_id in entry.config_entry_ids
+        if _entry_matches_config_entry(entry)
     ]
 
     connectivity_entity_id = None
