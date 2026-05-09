@@ -4,9 +4,11 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import datetime, timedelta
+import re
 from zoneinfo import ZoneInfo
 
 from homeassistant.config_entries import ConfigEntry, ConfigEntryState
+from homeassistant.const import CONF_API_KEY
 from homeassistant.const import STATE_UNAVAILABLE, STATE_UNKNOWN
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator
@@ -21,8 +23,45 @@ from .const import (
     DOMAIN,
 )
 from .discovery import discover_linked_entities
+from .rachio_api import RachioClient, RachioClientError
 
 TZ = ZoneInfo("UTC")
+EVENT_LOOKBACK_HOURS = 96
+
+RAIN_MM_RE = re.compile(r"observed ([0-9.]+) mm(?: and predicted ([0-9.]+) mm)?")
+THRESHOLD_MM_RE = re.compile(r"threshold of ([0-9.]+) mm")
+
+
+@dataclass(slots=True)
+class ScheduleSnapshot:
+    """Schedule-level status snapshot."""
+
+    rule_id: str
+    name: str
+    status: str
+    reason: str
+    catch_up_candidate: str
+    last_run_at: str | None
+    last_skip_at: str | None
+    summary: str
+    threshold_mm: float | None
+    observed_mm: float | None
+
+
+@dataclass(slots=True)
+class RachioEvidenceSnapshot:
+    """Controller evidence returned from the public Rachio API."""
+
+    controller_name: str
+    controller_id: str
+    last_event_summary: str
+    last_event_at: str | None
+    last_run_summary: str
+    last_run_at: str | None
+    last_skip_summary: str
+    last_skip_at: str | None
+    webhook_count: int
+    schedule_snapshots: tuple[ScheduleSnapshot, ...]
 
 
 @dataclass(slots=True)
@@ -48,9 +87,212 @@ class SupervisorSnapshot:
     actual_rain_value: str
     actual_rain_unit: str | None
     rain_actuals_status: str
+    controller_name: str
+    controller_id: str
+    last_event_summary: str
+    last_event_at: str | None
+    last_run_summary: str
+    last_run_at: str | None
+    last_skip_summary: str
+    last_skip_at: str | None
+    webhook_count: int
     last_refresh: str
     notes: tuple[str, ...]
     discovered_entities: dict[str, object]
+    schedule_snapshots: tuple[ScheduleSnapshot, ...]
+
+
+def event_dt(event: dict[str, object]) -> datetime:
+    """Return the event timestamp in UTC."""
+    return datetime.fromtimestamp(int(event["eventDate"]) / 1000, tz=TZ)
+
+
+def summarize_event(event: dict[str, object] | None) -> str:
+    """Summarize a Rachio event for display."""
+    if not event:
+        return "none"
+    summary = str(event.get("summary", "")).strip()
+    if summary:
+        return summary
+    subtype = str(event.get("subType", "")).strip()
+    event_type = str(event.get("type", "")).strip()
+    return f"{event_type} {subtype}".strip() or "event"
+
+
+def latest_event_by_schedule(
+    events: list[dict[str, object]],
+    event_type: str,
+    subtypes: tuple[str, ...],
+) -> dict[str, dict[str, object]]:
+    """Return the latest event for each schedule id."""
+    result: dict[str, dict[str, object]] = {}
+    for event in events:
+        schedule_id = event.get("scheduleId")
+        if not schedule_id:
+            continue
+        if event.get("type") != event_type:
+            continue
+        subtype = str(event.get("subType", ""))
+        if subtypes and subtype not in subtypes:
+            continue
+        key = str(schedule_id)
+        existing = result.get(key)
+        if existing is None or int(event["eventDate"]) > int(existing["eventDate"]):
+            result[key] = event
+    return result
+
+
+def parse_skip_summary(summary: str) -> tuple[float | None, float | None]:
+    """Parse observed and threshold rain from a skip summary."""
+    observed = threshold = None
+    rain_match = RAIN_MM_RE.search(summary)
+    if rain_match:
+        observed = float(rain_match.group(1))
+    threshold_match = THRESHOLD_MM_RE.search(summary)
+    if threshold_match:
+        threshold = float(threshold_match.group(1))
+    return observed, threshold
+
+
+def choose_controller(
+    devices: list[dict[str, object]],
+    expected_zone_count: int,
+) -> dict[str, object] | None:
+    """Choose the best sprinkler controller for the linked site."""
+    candidates: list[tuple[int, int, dict[str, object]]] = []
+    for device in devices:
+        zones = device.get("zones", [])
+        if not isinstance(zones, list) or not zones:
+            continue
+        enabled_zones = [zone for zone in zones if zone.get("enabled", True)]
+        enabled_count = len(enabled_zones)
+        score = -abs(enabled_count - expected_zone_count)
+        candidates.append((score, enabled_count, device))
+    if not candidates:
+        return None
+    candidates.sort(key=lambda item: (item[0], item[1]), reverse=True)
+    return candidates[0][2]
+
+
+def build_rachio_evidence(
+    client: RachioClient,
+    expected_zone_count: int,
+    actual_rain_value: str,
+    controller_available: bool,
+) -> RachioEvidenceSnapshot:
+    """Build a site-level evidence snapshot from the public Rachio API."""
+    devices = client.list_person_devices()
+    controller = choose_controller(devices, expected_zone_count)
+    if controller is None:
+        raise RachioClientError("No sprinkler controller with enabled zones was found.")
+
+    controller_id = str(controller["id"])
+    controller_name = str(controller.get("name", "Rachio Controller"))
+    now = datetime.now(tz=TZ)
+    events = client.list_device_events(
+        controller_id,
+        start=now - timedelta(hours=EVENT_LOOKBACK_HOURS),
+        end=now,
+    )
+    webhooks = client.list_device_webhooks(controller_id)
+
+    latest_event = max(events, key=lambda event: int(event["eventDate"]), default=None)
+    latest_run = max(
+        [
+            event
+            for event in events
+            if event.get("type") in {"SCHEDULE_STATUS", "ZONE_STATUS"}
+            and str(event.get("subType", "")).endswith(("STARTED", "COMPLETED", "STOPPED"))
+        ],
+        key=lambda event: int(event["eventDate"]),
+        default=None,
+    )
+    latest_skip = max(
+        [
+            event
+            for event in events
+            if event.get("type") == "WEATHER_INTELLIGENCE"
+            and "SKIP" in str(event.get("subType", ""))
+        ],
+        key=lambda event: int(event["eventDate"]),
+        default=None,
+    )
+
+    completed_by_schedule = latest_event_by_schedule(
+        events,
+        "SCHEDULE_STATUS",
+        ("SCHEDULE_COMPLETED",),
+    )
+    skipped_by_schedule = latest_event_by_schedule(
+        events,
+        "WEATHER_INTELLIGENCE",
+        ("WEATHER_INTELLIGENCE_SKIP",),
+    )
+
+    try:
+        actual_rain_numeric = float(actual_rain_value)
+    except (TypeError, ValueError):
+        actual_rain_numeric = None
+
+    schedule_snapshots: list[ScheduleSnapshot] = []
+    for rule in controller.get("scheduleRules", []):
+        if not rule.get("enabled"):
+            continue
+        rule_id = str(rule["id"])
+        name = str(rule.get("name", rule_id))
+        run_event = completed_by_schedule.get(rule_id)
+        skip_event = skipped_by_schedule.get(rule_id)
+        observed_mm = threshold_mm = None
+        if skip_event:
+            observed_mm, threshold_mm = parse_skip_summary(str(skip_event.get("summary", "")))
+        if run_event:
+            status = "completed_recently"
+            reason = summarize_event(run_event)
+        elif skip_event:
+            status = "skipped_recently"
+            reason = summarize_event(skip_event)
+        else:
+            status = "monitoring"
+            reason = "No recent completed or skipped schedule event in the inspection window."
+
+        if skip_event and actual_rain_numeric is not None and threshold_mm is not None:
+            if controller_available and actual_rain_numeric < threshold_mm:
+                candidate = "candidate"
+            else:
+                candidate = "not_needed"
+        elif skip_event:
+            candidate = "unknown"
+        else:
+            candidate = "not_applicable"
+
+        schedule_snapshots.append(
+            ScheduleSnapshot(
+                rule_id=rule_id,
+                name=name,
+                status=status,
+                reason=reason,
+                catch_up_candidate=candidate,
+                last_run_at=event_dt(run_event).isoformat() if run_event else None,
+                last_skip_at=event_dt(skip_event).isoformat() if skip_event else None,
+                summary=reason,
+                threshold_mm=threshold_mm,
+                observed_mm=observed_mm,
+            )
+        )
+
+    schedule_snapshots.sort(key=lambda snapshot: snapshot.name.lower())
+    return RachioEvidenceSnapshot(
+        controller_name=controller_name,
+        controller_id=controller_id,
+        last_event_summary=summarize_event(latest_event),
+        last_event_at=event_dt(latest_event).isoformat() if latest_event else None,
+        last_run_summary=summarize_event(latest_run),
+        last_run_at=event_dt(latest_run).isoformat() if latest_run else None,
+        last_skip_summary=summarize_event(latest_skip),
+        last_skip_at=event_dt(latest_skip).isoformat() if latest_skip else None,
+        webhook_count=len(webhooks),
+        schedule_snapshots=tuple(schedule_snapshots),
+    )
 
 
 class RachioSupervisorCoordinator(DataUpdateCoordinator[SupervisorSnapshot]):
@@ -144,6 +386,45 @@ class RachioSupervisorCoordinator(DataUpdateCoordinator[SupervisorSnapshot]):
         else:
             health = "unavailable"
 
+        controller_name = "unknown"
+        controller_id = "unknown"
+        last_event_summary = "unavailable"
+        last_event_at = None
+        last_run_summary = "unavailable"
+        last_run_at = None
+        last_skip_summary = "unavailable"
+        last_skip_at = None
+        webhook_count = 0
+        schedule_snapshots: tuple[ScheduleSnapshot, ...] = ()
+
+        api_key = linked_entry.data.get(CONF_API_KEY) if linked_entry else None
+        if not api_key:
+            notes.append("Linked Rachio entry does not expose an API key to the supervisor.")
+        elif linked_entry and linked_entry.state == ConfigEntryState.LOADED:
+            try:
+                evidence = await self.hass.async_add_executor_job(
+                    build_rachio_evidence,
+                    RachioClient(str(api_key)),
+                    len(linked_entities.zone_switches),
+                    actual_rain_value,
+                    connectivity not in {"off", "missing", "unavailable"},
+                )
+            except RachioClientError as err:
+                notes.append(f"Rachio API evidence fetch failed: {err}")
+                if health == "healthy":
+                    health = "degraded"
+            else:
+                controller_name = evidence.controller_name
+                controller_id = evidence.controller_id
+                last_event_summary = evidence.last_event_summary
+                last_event_at = evidence.last_event_at
+                last_run_summary = evidence.last_run_summary
+                last_run_at = evidence.last_run_at
+                last_skip_summary = evidence.last_skip_summary
+                last_skip_at = evidence.last_skip_at
+                webhook_count = evidence.webhook_count
+                schedule_snapshots = evidence.schedule_snapshots
+
         return SupervisorSnapshot(
             health=health,
             mode=mode,
@@ -164,6 +445,15 @@ class RachioSupervisorCoordinator(DataUpdateCoordinator[SupervisorSnapshot]):
             actual_rain_value=actual_rain_value,
             actual_rain_unit=actual_rain_unit,
             rain_actuals_status=rain_actuals_status,
+            controller_name=controller_name,
+            controller_id=controller_id,
+            last_event_summary=last_event_summary,
+            last_event_at=last_event_at,
+            last_run_summary=last_run_summary,
+            last_run_at=last_run_at,
+            last_skip_summary=last_skip_summary,
+            last_skip_at=last_skip_at,
+            webhook_count=webhook_count,
             last_refresh=datetime.now(tz=TZ).isoformat(),
             notes=tuple(notes),
             discovered_entities={
@@ -175,4 +465,5 @@ class RachioSupervisorCoordinator(DataUpdateCoordinator[SupervisorSnapshot]):
                 "schedule_switches": list(linked_entities.schedule_switches),
                 "entity_count": len(linked_entities.all_entities),
             },
+            schedule_snapshots=schedule_snapshots,
         )

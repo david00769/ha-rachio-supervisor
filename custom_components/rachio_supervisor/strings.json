@@ -54,6 +54,12 @@
       "actual_rain_24h": {
         "name": "Actual rain, 24h"
       },
+      "last_run": {
+        "name": "Last run"
+      },
+      "last_skip": {
+        "name": "Last skip"
+      },
       "active_zone_count": {
         "name": "Active zones"
       },

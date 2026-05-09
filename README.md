@@ -19,20 +19,26 @@ This repository is the initial public seed:
 - recommended Lovelace dashboard package
 
 The full irrigation runtime is not complete yet. The repo now includes the
-first real runtime milestone:
+first real runtime milestones:
 
 - config flow links to an existing Home Assistant `rachio` entry
 - the integration discovers the linked Rachio entity surface from the entity
   registry
 - site-level supervisor sensors expose health, linked controller posture,
   actual-rain input status, and discovered zone counts
+- the coordinator now reads real Rachio public API event history using the
+  linked HA `rachio` API key
+- site-level sensors now expose `last run` and `last skip`
+- schedule-level sensors now expose:
+  - status
+  - reason
+  - catch-up candidate
 
 The deeper irrigation logic is still pending:
 
-- Rachio event-history reasoning
-- catch-up decision engine
+- richer catch-up decision engine
 - moisture write-back flows
-- zone-level status / reason entities
+- webhook-quality reasoning
 
 ## Product stance
 
@@ -78,18 +84,25 @@ Today the custom integration provides a narrow but real runtime:
 
 - config flow selects an existing Home Assistant `rachio` entry
 - actual rainfall is mapped from a selected sensor entity
-- the coordinator inspects the linked Rachio entry and publishes:
+- the coordinator inspects the linked Rachio entry and Rachio public API and publishes:
   - health
   - linked Rachio entry
   - operating mode
   - action posture
   - actual rain, 24h
+  - last run
+  - last skip
   - active-zone count
   - configured-zone count
   - last refresh
+- schedule-level sensors for each active Rachio schedule:
+  - status
+  - reason
+  - catch-up candidate
 
-This milestone is intentionally site-level. Zone-level reasoning still belongs
-to the next implementation pass.
+This milestone is still intentionally narrow. It does not yet execute catch-up
+actions or moisture write-back, and it does not yet publish the full webhook
+health model from the private Sugarloaf supervisor.
 
 ## HACS status
 

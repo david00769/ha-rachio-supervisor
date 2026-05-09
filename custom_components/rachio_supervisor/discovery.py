@@ -70,7 +70,7 @@ def discover_linked_entities(
     all_entities: list[str] = []
 
     for entry in entries:
-        if entry.disabled:
+        if entry.disabled_by is not None:
             continue
         entity_id = entry.entity_id
         all_entities.append(entity_id)
