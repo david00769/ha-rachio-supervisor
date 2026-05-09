@@ -24,3 +24,6 @@
 - Expanded the deterministic test harness so local coverage now includes config-flow optional-input behavior, options-flow moisture mapping, site-level entity naming/state exposure, and diagnostics payload shape.
 - Replaced the stale dashboard example with the accepted live `Irrigation Shadow` layout using stable `sensor.rachio_site_*` entities.
 - Added screenshot assets for the current live shadow dashboard and documented a frontend-skill critique of the current operator surface, including the remaining `Recent decisions` density issue on narrow widths.
+- Tightened shadow-runtime health semantics so `Health` now reflects runtime integrity only, while optional rain/moisture gaps surface through data-completeness warnings and explicit `missing_inputs` attributes.
+- Added site-level compact moisture review payloads so mapped schedules remain visible in the dashboard even when recommended moisture writes are `0`.
+- Added compact decision attributes (`subject`, `brief`, `at_local`) for recent-decision dashboard rendering and updated the recommended Lovelace example to use built-in markdown cards instead of raw long-string entities in the first viewport.

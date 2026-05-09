@@ -19,6 +19,19 @@ views:
               - entity: sensor.rachio_site_last_catch_up_decision
               - entity: sensor.rachio_site_active_flow_alerts
               - entity: sensor.rachio_site_recommended_moisture_writes
+          - type: markdown
+            content: |
+              {% set reason = state_attr('sensor.rachio_site_health', 'supervisor_reason') or 'No runtime explanation available.' %}
+              {% set missing = state_attr('sensor.rachio_site_health', 'missing_inputs') or [] %}
+              **Runtime posture**  
+              {{ reason }}
+
+              {% if missing %}
+              **Data warnings**
+              {% for item in missing %}
+              - `{{ item }}`
+              {% endfor %}
+              {% endif %}
       - type: grid
         cards:
           - type: heading
@@ -28,38 +41,52 @@ views:
             show_header_toggle: false
             entities:
               - entity: sensor.rachio_site_recommended_moisture_writes
-              - entity: sensor.rachio_site_recommended_moisture_queue
               - entity: sensor.rachio_site_ready_moisture_writes
-              - entity: sensor.rachio_site_moisture_write_queue
               - entity: sensor.rachio_site_last_moisture_write
           - type: markdown
             content: |
+              {% set items = state_attr('sensor.rachio_site_recommended_moisture_writes', 'moisture_review_items') or [] %}
+              {% if items %}
+              {% for item in items %}
+              **{{ item.schedule_name }}**  
+              {{ item.posture_note }} · band: `{{ item.moisture_band }}`{% if item.moisture_write_back_ready == 'ready' %} · `write-back ready`{% endif %}
+              {% if item.mapped_sensor %}Sensor: `{{ item.mapped_sensor }}`{% endif %}
+
+              {% endfor %}
+              {% else %}
+              No mapped schedule moisture review items yet.
+              {% endif %}
+
               **Manual review contract**
 
               - `Recommended` means review this schedule now.
               - `Ready` means a manual write to Rachio can be issued now.
               - `Written` or `Rejected` means there is audit history.
 
-              **Priority moisture review**
-
-              - `Pots - Dawn Micro`: Top sensor candidate.
-              - `Driveway Hedge`: Moisture watch.
-              - `Lawn - Summer Green`: Heat top-up candidate, still manual-only.
-              - `Boxwood + Liriope`: Keep/watch.
-              - `Rear Protea Shade Bed`: Moisture watch, no default boost, avoid saturation.
+              Rear Protea Shade Bed stays conservative: `Moisture watch`, `No default boost`, `Avoid saturation`.
       - type: grid
         cards:
           - type: heading
             heading: Catch-up / top-up outlook
-          - type: entities
+          - type: markdown
             title: Recent decisions
-            show_header_toggle: false
-            entities:
-              - entity: sensor.rachio_site_last_event
-              - entity: sensor.rachio_site_last_run_event
-              - entity: sensor.rachio_site_last_skip_decision
-              - entity: sensor.rachio_site_last_reconciliation
-              - entity: sensor.rachio_site_last_catch_up_decision
+            content: |
+              {% set rows = [
+                ('Last event', 'sensor.rachio_site_last_event'),
+                ('Last run event', 'sensor.rachio_site_last_run_event'),
+                ('Last skip decision', 'sensor.rachio_site_last_skip_decision'),
+                ('Last reconciliation', 'sensor.rachio_site_last_reconciliation'),
+                ('Last catch-up decision', 'sensor.rachio_site_last_catch_up_decision')
+              ] %}
+              {% for label, entity in rows %}
+              {% set subject = state_attr(entity, 'subject') or label %}
+              {% set brief = state_attr(entity, 'brief') or states(entity) %}
+              {% set at_local = state_attr(entity, 'at_local') or 'none' %}
+              **{{ label }}**  
+              {{ subject }}  
+              `{{ brief }}` at `{{ at_local }}`
+
+              {% endfor %}
       - type: grid
         cards:
           - type: heading

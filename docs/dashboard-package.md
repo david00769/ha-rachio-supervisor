@@ -32,6 +32,12 @@ Interaction thesis:
 - schedule detail should stay below the decision rail so the dashboard never
   feels like a spreadsheet first
 
+Health contract:
+- `Health` is runtime integrity only
+- missing rain or moisture inputs are warnings, not top-level degradation
+- the dashboard should render `supervisor_reason` and any `missing_inputs`
+  directly below the posture rail so the operator does not need Developer Tools
+
 ## Primary operator questions
 
 The dashboard should be designed around these questions, in this order:
@@ -106,7 +112,9 @@ Strengths:
 
 Remaining issues:
 
-- `Recent decisions` is still too dense for first-scan use when values are long
+- raw `Recent decisions` entities were too dense for first-scan use when values
+  were long, so the accepted contract now uses a templated markdown summary
+  fed by compact `subject` / `brief` / `at_local` attributes
 - the decision rail is split across too many adjacent cards for a narrow screen
 - queue and audit context should stay below the posture rail unless non-zero
 - parity comparison should be a shadow-only appendix, not a permanent operator
@@ -188,6 +196,18 @@ The operator contract should stay explicit:
 - `Written` / `Rejected` = audit trail from the last manual write attempt
 
 Do not treat moisture drift as automatic top-up watering in v1.
+
+Even when recommended writes are `0`, the dashboard should still show the
+mapped review list with:
+
+- schedule name
+- mapped sensor
+- current band
+- posture note
+- write-back readiness
+
+That is the only way to make wet-condition reviews legible after substantial
+rain without inventing noisy or misleading recommendations.
 
 ### Conservative watch zones
 

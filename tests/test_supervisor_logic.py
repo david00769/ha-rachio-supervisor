@@ -7,7 +7,7 @@ surface the current coordinator and service helpers import.
 from __future__ import annotations
 
 import asyncio
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import datetime, timezone
 import importlib
 from pathlib import Path
@@ -355,10 +355,13 @@ sensor_module = importlib.import_module("custom_components.rachio_supervisor.sen
 from custom_components.rachio_supervisor.const import DOMAIN
 from custom_components.rachio_supervisor.coordinator import (
     FlowAlertSnapshot,
+    RachioEvidenceSnapshot,
     RachioSupervisorCoordinator,
     ScheduleSnapshot,
     SupervisorSnapshot,
     build_flow_alert_snapshots,
+    build_moisture_review_items,
+    evaluate_cached_evidence_health,
     observed_rain_24h,
 )
 
@@ -663,6 +666,102 @@ class CadenceParityTests(unittest.TestCase):
         self.assertIsNone(coordinator._degraded_since)
 
 
+class RuntimeHealthAndMoistureTests(unittest.TestCase):
+    def test_fresh_cached_evidence_is_healthy_without_optional_inputs(self) -> None:
+        evidence = RachioEvidenceSnapshot(
+            controller_name="Yard Controller",
+            controller_id="controller-1",
+            last_event_summary="Pots - Dawn Micro ran for 3 minutes.",
+            last_event_at="2026-05-10T06:52:35+10:00",
+            last_run_summary="Pots - Dawn Micro ran for 3 minutes.",
+            last_run_at="2026-05-10T06:52:35+10:00",
+            last_skip_summary="none",
+            last_skip_at=None,
+            observed_rain_24h="unknown",
+            observed_rain_status="not_reported",
+            observed_rain_best_event=None,
+            webhook_count=1,
+            webhook_health="registered",
+            webhook_url="https://example.invalid/webhook",
+            webhook_external_id="abc",
+            flow_alert_snapshots=(),
+            schedule_snapshots=(),
+        )
+
+        health, reason, webhook_health = evaluate_cached_evidence_health(
+            evidence=evidence,
+            current=datetime.fromisoformat("2026-05-10T07:00:00+10:00"),
+        )
+
+        self.assertEqual(health, "healthy")
+        self.assertEqual(webhook_health, "healthy")
+        self.assertIn("event history is fresh", reason)
+
+    def test_stale_cached_evidence_is_degraded(self) -> None:
+        evidence = RachioEvidenceSnapshot(
+            controller_name="Yard Controller",
+            controller_id="controller-1",
+            last_event_summary="Old event",
+            last_event_at="2026-05-08T00:00:00+10:00",
+            last_run_summary="Old run",
+            last_run_at="2026-05-08T00:00:00+10:00",
+            last_skip_summary="none",
+            last_skip_at=None,
+            observed_rain_24h="unknown",
+            observed_rain_status="not_reported",
+            observed_rain_best_event=None,
+            webhook_count=1,
+            webhook_health="registered",
+            webhook_url="https://example.invalid/webhook",
+            webhook_external_id="abc",
+            flow_alert_snapshots=(),
+            schedule_snapshots=(),
+        )
+
+        health, reason, webhook_health = evaluate_cached_evidence_health(
+            evidence=evidence,
+            current=datetime.fromisoformat("2026-05-10T07:00:00+10:00"),
+        )
+
+        self.assertEqual(health, "degraded")
+        self.assertEqual(webhook_health, "stale")
+        self.assertIn("older than", reason)
+
+    def test_moisture_review_items_exist_even_without_recommendations(self) -> None:
+        schedule = ScheduleSnapshot(
+            rule_id="rule-1",
+            name="Rear Protea Shade Bed",
+            status="idle",
+            reason="none",
+            catch_up_candidate="not_needed",
+            policy_mode="observe_only",
+            policy_basis="default",
+            schedule_entity_id="switch.schedule_protea",
+            zone_entity_id="switch.zone_protea",
+            controller_zone_id="zone-1",
+            moisture_entity_id="sensor.rear_protea_moisture",
+            moisture_value="58",
+            moisture_band="wet",
+            moisture_status="ok",
+            moisture_write_back_ready="ready",
+            recommended_action="none",
+            review_state="none",
+            runtime_minutes=3,
+            last_run_at="2026-05-09T11:00:00",
+            last_skip_at="2026-05-09T10:00:00",
+            summary="Rear Protea review summary",
+            threshold_mm=6.35,
+            observed_mm=None,
+        )
+
+        items = build_moisture_review_items((schedule,))
+
+        self.assertEqual(len(items), 1)
+        self.assertEqual(items[0]["schedule_name"], "Rear Protea Shade Bed")
+        self.assertEqual(items[0]["moisture_band"], "wet")
+        self.assertEqual(items[0]["recommended_action"], "none")
+
+
 class ConfigFlowBehaviorTests(unittest.TestCase):
     def _hass(self) -> SimpleNamespace:
         return SimpleNamespace(
@@ -793,6 +892,9 @@ class DiagnosticsAndEntityTests(unittest.TestCase):
             health="healthy",
             supervisor_mode="healthy",
             supervisor_reason="Fresh evidence.",
+            data_completeness="warnings",
+            missing_inputs=("rain_actuals_unconfigured",),
+            runtime_integrity="healthy",
             mode="observe_only",
             action_posture="per_zone_opt_in",
             site_name="Sugarloaf",
@@ -851,6 +953,18 @@ class DiagnosticsAndEntityTests(unittest.TestCase):
             last_moisture_write_value=None,
             last_refresh="2026-05-09T12:15:00",
             notes=("All good",),
+            moisture_review_items=(
+                {
+                    "schedule_name": "Pots - Dawn Micro",
+                    "mapped_sensor": "sensor.pots_moisture",
+                    "moisture_band": "target",
+                    "posture_note": "Moisture watch",
+                    "recommended_action": "none",
+                    "review_state": "none",
+                    "moisture_write_back_ready": "ready",
+                    "moisture_value": "42",
+                },
+            ),
             discovered_entities={"entity_count": 10},
             schedule_snapshots=(schedule,),
         )
@@ -891,6 +1005,52 @@ class DiagnosticsAndEntityTests(unittest.TestCase):
             entity.extra_state_attributes["recommended_moisture_write_queue"],
             "Pots - Dawn Micro",
         )
+        self.assertEqual(
+            entity.extra_state_attributes["moisture_review_items"][0]["schedule_name"],
+            "Pots - Dawn Micro",
+        )
+
+    def test_health_sensor_exposes_runtime_and_data_completeness(self) -> None:
+        snapshot = self._snapshot()
+        coordinator = SimpleNamespace(
+            entry=SimpleNamespace(entry_id="entry-1", title="Sugarloaf"),
+            data=snapshot,
+            _cached_evidence=None,
+        )
+        description = next(
+            item for item in sensor_module.DESCRIPTIONS if item.key == "health"
+        )
+
+        entity = sensor_module.RachioSupervisorSensor(coordinator, description)
+
+        self.assertEqual(entity.native_value, "healthy")
+        self.assertEqual(entity.extra_state_attributes["runtime_integrity"], "healthy")
+        self.assertEqual(entity.extra_state_attributes["data_completeness"], "warnings")
+        self.assertEqual(
+            entity.extra_state_attributes["missing_inputs"],
+            ["rain_actuals_unconfigured"],
+        )
+
+    def test_last_run_sensor_exposes_compact_decision_fields(self) -> None:
+        snapshot = self._snapshot()
+        snapshot = replace(
+            snapshot,
+            last_run_summary="Pots - Dawn Micro ran for 3 minutes.",
+        )
+        coordinator = SimpleNamespace(
+            entry=SimpleNamespace(entry_id="entry-1", title="Sugarloaf"),
+            data=snapshot,
+            _cached_evidence=None,
+        )
+        description = next(
+            item for item in sensor_module.DESCRIPTIONS if item.key == "last_run_event"
+        )
+
+        entity = sensor_module.RachioSupervisorSensor(coordinator, description)
+
+        self.assertEqual(entity.extra_state_attributes["subject"], "Pots - Dawn Micro")
+        self.assertEqual(entity.extra_state_attributes["brief"], "ran 3 min")
+        self.assertEqual(entity.extra_state_attributes["at_local"], "11:00")
 
     def test_schedule_sensor_exposes_schedule_context(self) -> None:
         snapshot = self._snapshot()

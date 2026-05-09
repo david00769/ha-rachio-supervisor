@@ -146,6 +146,9 @@ class SupervisorSnapshot:
     health: str
     supervisor_mode: str
     supervisor_reason: str
+    data_completeness: str
+    missing_inputs: tuple[str, ...]
+    runtime_integrity: str
     mode: str
     action_posture: str
     site_name: str
@@ -204,6 +207,7 @@ class SupervisorSnapshot:
     last_moisture_write_value: str | None
     last_refresh: str
     notes: tuple[str, ...]
+    moisture_review_items: tuple[dict[str, object], ...]
     discovered_entities: dict[str, object]
     schedule_snapshots: tuple[ScheduleSnapshot, ...]
 
@@ -703,6 +707,93 @@ def apply_moisture_mapping(
             )
         )
     return tuple(hydrated)
+
+
+def evaluate_cached_evidence_health(
+    *,
+    evidence: RachioEvidenceSnapshot | None,
+    current: datetime,
+) -> tuple[str, str, str]:
+    """Return runtime health, reason, and webhook surface from cached evidence."""
+    if evidence is None:
+        return (
+            "degraded",
+            "Awaiting first reconcile.",
+            "unknown",
+        )
+    if evidence.webhook_health != "registered":
+        return (
+            "degraded",
+            "No valid Home Assistant-managed Rachio webhook is registered.",
+            "registration_missing",
+        )
+    if evidence.last_event_at is None:
+        return (
+            "degraded",
+            "No Rachio event history returned in the inspection window.",
+            "stale",
+        )
+    latest_event_dt = datetime.fromisoformat(evidence.last_event_at)
+    freshness = current - latest_event_dt
+    if freshness > timedelta(hours=EXPECTED_EVENT_FRESHNESS_HOURS):
+        return (
+            "degraded",
+            f"Latest Rachio event is older than {EXPECTED_EVENT_FRESHNESS_HOURS}h ({freshness}).",
+            "stale",
+        )
+    return (
+        "healthy",
+        "Webhook registration present and event history is fresh.",
+        "healthy",
+    )
+
+
+def build_moisture_review_items(
+    schedules: tuple[ScheduleSnapshot, ...],
+) -> tuple[dict[str, object], ...]:
+    """Build compact site-level moisture review items for dashboard use."""
+    items: list[dict[str, object]] = []
+    for schedule in schedules:
+        if schedule.moisture_entity_id is None and schedule.moisture_band == "unmapped":
+            continue
+        if schedule.recommended_action == "write_moisture_now":
+            posture_note = "Write-back recommended"
+            rank = 0
+        elif schedule.moisture_write_back_ready == "ready" and schedule.moisture_band == "dry":
+            posture_note = "Write-back ready"
+            rank = 1
+        elif schedule.moisture_band in {"missing", "unavailable", "non_numeric"}:
+            posture_note = "Sensor repair needed"
+            rank = 3
+        elif schedule.moisture_band == "wet":
+            posture_note = "Wet / no write"
+            rank = 2
+        elif schedule.moisture_band == "target":
+            posture_note = "Moisture watch"
+            rank = 2
+        elif schedule.moisture_band == "dry":
+            posture_note = "Dry / review"
+            rank = 1
+        else:
+            posture_note = "Unmapped"
+            rank = 4
+        items.append(
+            {
+                "schedule_name": schedule.name,
+                "mapped_sensor": schedule.moisture_entity_id,
+                "moisture_band": schedule.moisture_band,
+                "posture_note": posture_note,
+                "recommended_action": schedule.recommended_action,
+                "review_state": schedule.review_state,
+                "moisture_write_back_ready": schedule.moisture_write_back_ready,
+                "moisture_value": schedule.moisture_value,
+                "_rank": rank,
+            }
+        )
+    items.sort(key=lambda item: (int(item["_rank"]), str(item["schedule_name"]).lower()))
+    for item in items:
+        item.pop("_rank", None)
+    return tuple(items)
 
 
 def choose_controller(
@@ -1325,16 +1416,26 @@ class RachioSupervisorCoordinator(DataUpdateCoordinator[SupervisorSnapshot]):
                     count += 1
             return count
 
-        rain_state_obj = self.hass.states.get(data.get(CONF_RAIN_ACTUALS_ENTITY, ""))
-        if rain_state_obj is None:
+        missing_inputs: list[str] = []
+        rain_actuals_entity = str(data.get(CONF_RAIN_ACTUALS_ENTITY, "") or "")
+        rain_state_obj = self.hass.states.get(rain_actuals_entity)
+        if not rain_actuals_entity:
+            actual_rain_value = "unconfigured"
+            actual_rain_unit = None
+            rain_actuals_status = "unconfigured"
+            missing_inputs.append("rain_actuals_unconfigured")
+            notes.append("Actual rain entity is optional and is not configured.")
+        elif rain_state_obj is None:
             actual_rain_value = "unavailable"
             actual_rain_unit = None
             rain_actuals_status = "missing"
-            notes.append("Actual rain entity is missing or unavailable.")
+            missing_inputs.append("rain_actuals_missing")
+            notes.append("Actual rain entity is configured but missing.")
         elif rain_state_obj.state in {STATE_UNAVAILABLE, STATE_UNKNOWN}:
             actual_rain_value = str(rain_state_obj.state)
             actual_rain_unit = rain_state_obj.attributes.get("unit_of_measurement")
             rain_actuals_status = "unavailable"
+            missing_inputs.append("rain_actuals_unavailable")
             notes.append("Actual rain entity is present but not reporting a usable value.")
         else:
             actual_rain_value = str(rain_state_obj.state)
@@ -1355,10 +1456,9 @@ class RachioSupervisorCoordinator(DataUpdateCoordinator[SupervisorSnapshot]):
         if not linked_entities.zone_switches:
             notes.append("No zone switches were discovered from the linked Rachio entry.")
 
-        if linked_entry and linked_entry.state == ConfigEntryState.LOADED and rain_actuals_status == "ok":
-            health = "healthy"
+        if linked_entry and linked_entry.state == ConfigEntryState.LOADED:
+            health = "degraded"
         elif linked_entry and linked_entry.state in {
-            ConfigEntryState.LOADED,
             ConfigEntryState.SETUP_IN_PROGRESS,
             ConfigEntryState.NOT_LOADED,
         }:
@@ -1392,6 +1492,7 @@ class RachioSupervisorCoordinator(DataUpdateCoordinator[SupervisorSnapshot]):
         do_reconcile = self._should_reconcile(current)
         if not api_key:
             notes.append("Linked Rachio entry does not expose an API key to the supervisor.")
+            self._supervisor_reason = "Linked Rachio entry does not expose an API key to the supervisor."
         elif linked_entry and linked_entry.state == ConfigEntryState.LOADED and (
             do_reconcile or self._cached_evidence is None
         ):
@@ -1416,33 +1517,10 @@ class RachioSupervisorCoordinator(DataUpdateCoordinator[SupervisorSnapshot]):
                 self._supervisor_reason = f"Rachio API evidence fetch failed: {err}"
             else:
                 self._cached_evidence = evidence
-                if evidence.webhook_health != "registered":
-                    health = "degraded"
-                    self._supervisor_reason = (
-                        "No valid Home Assistant-managed Rachio webhook is registered."
-                    )
-                    webhook_health = "registration_missing"
-                elif evidence.last_event_at is None:
-                    health = "degraded"
-                    self._supervisor_reason = (
-                        "No Rachio event history returned in the inspection window."
-                    )
-                    webhook_health = "stale"
-                else:
-                    latest_event_dt = datetime.fromisoformat(evidence.last_event_at)
-                    freshness = current - latest_event_dt
-                    if freshness > timedelta(hours=EXPECTED_EVENT_FRESHNESS_HOURS):
-                        health = "degraded"
-                        self._supervisor_reason = (
-                            f"Latest Rachio event is older than {EXPECTED_EVENT_FRESHNESS_HOURS}h ({freshness})."
-                        )
-                        webhook_health = "stale"
-                    else:
-                        health = "healthy"
-                        self._supervisor_reason = (
-                            "Webhook registration present and event history is fresh."
-                        )
-                        webhook_health = "healthy"
+                health, self._supervisor_reason, webhook_health = evaluate_cached_evidence_health(
+                    evidence=evidence,
+                    current=current,
+                )
                 effective_mode = self._apply_health_transition(health, current)
                 self._last_reconciliation = current.isoformat()
                 if health == "healthy":
@@ -1458,6 +1536,14 @@ class RachioSupervisorCoordinator(DataUpdateCoordinator[SupervisorSnapshot]):
                 notes.append(self._supervisor_reason)
         evidence = self._cached_evidence
         if evidence is not None:
+            if linked_entry and linked_entry.state == ConfigEntryState.LOADED:
+                health, self._supervisor_reason, cached_webhook_health = evaluate_cached_evidence_health(
+                    evidence=evidence,
+                    current=current,
+                )
+                if webhook_health == "unknown":
+                    webhook_health = cached_webhook_health
+                effective_mode = self._apply_health_transition(health, current)
             controller_name = evidence.controller_name
             controller_id = evidence.controller_id
             last_event_summary = evidence.last_event_summary
@@ -1485,12 +1571,23 @@ class RachioSupervisorCoordinator(DataUpdateCoordinator[SupervisorSnapshot]):
                 schedule_moisture_map,
                 self._acknowledged_recommendation_ids,
             )
+            if not any(schedule.moisture_entity_id for schedule in schedule_snapshots):
+                missing_inputs.append("no_active_schedule_moisture_mappings")
             if data.get(CONF_MOISTURE_SENSOR_ENTITIES, []) and not any(
                 schedule.moisture_entity_id for schedule in schedule_snapshots
             ):
                 notes.append(
                     "Candidate moisture sensors were configured, but no explicit schedule mapping is active."
                 )
+            for schedule in schedule_snapshots:
+                if schedule.moisture_entity_id and schedule.moisture_band in {
+                    "missing",
+                    "unavailable",
+                    "non_numeric",
+                }:
+                    missing_inputs.append(
+                        f"moisture_sensor_problem:{schedule.name}:{schedule.moisture_band}"
+                    )
             context_controller_available = connectivity not in {"off", "missing", "unavailable"}
             decision = evaluate_catch_up_decision(
                 current=current,
@@ -1666,11 +1763,16 @@ class RachioSupervisorCoordinator(DataUpdateCoordinator[SupervisorSnapshot]):
             if latest_flow_alert
             else "none"
         )
+        data_completeness = "complete" if not missing_inputs else "warnings"
+        moisture_review_items = build_moisture_review_items(schedule_snapshots)
 
         return SupervisorSnapshot(
             health=health,
             supervisor_mode=self._mode,
             supervisor_reason=self._supervisor_reason,
+            data_completeness=data_completeness,
+            missing_inputs=tuple(missing_inputs),
+            runtime_integrity=health,
             mode=mode,
             action_posture=action_posture,
             site_name=data.get(CONF_SITE_NAME, self.entry.title),
@@ -1729,6 +1831,7 @@ class RachioSupervisorCoordinator(DataUpdateCoordinator[SupervisorSnapshot]):
             last_moisture_write_value=self._last_moisture_write_value,
             last_refresh=current.isoformat(),
             notes=tuple(notes),
+            moisture_review_items=moisture_review_items,
             discovered_entities={
                 "connectivity": linked_entities.connectivity_entity_id,
                 "rain": linked_entities.rain_entity_id,

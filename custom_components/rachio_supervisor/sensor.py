@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from datetime import datetime
 from typing import Callable
 
 from homeassistant.components.sensor import SensorEntity, SensorEntityDescription
@@ -49,6 +50,63 @@ SITE_SENSOR_NAMES = {
     "flow_alert_queue": "Flow alert queue",
     "last_flow_alert_decision": "Last flow alert decision",
 }
+
+
+def _format_at_local(value: str | None) -> str:
+    """Format one ISO timestamp for compact local display."""
+    if not value or value == "never":
+        return "none"
+    try:
+        return datetime.fromisoformat(value).strftime("%H:%M")
+    except ValueError:
+        return str(value)[:16]
+
+
+def _compact_run_summary(summary: str) -> tuple[str | None, str]:
+    """Compact a run-style summary into subject and brief text."""
+    if " ran for " in summary:
+        subject, remainder = summary.split(" ran for ", 1)
+        minutes = remainder.replace(" minutes.", " min").replace(" minute.", " min")
+        return subject.strip(), f"ran {minutes}".strip()
+    return None, summary
+
+
+def _compact_skip_summary(summary: str) -> tuple[str | None, str]:
+    """Compact a skip-style summary into subject and brief text."""
+    if " was scheduled" in summary:
+        subject = summary.split(" was scheduled", 1)[0].strip()
+        brief = "skip: weather/soil"
+        if "rain" in summary.lower():
+            brief = "skip: rain"
+        return subject, brief
+    return None, summary
+
+
+def _decision_compact_attrs(
+    *,
+    label: str,
+    summary: str,
+    at_local: str | None,
+) -> dict[str, object]:
+    """Build compact dashboard-facing fields for one decision sensor."""
+    subject = label
+    brief = summary
+    if label in {"Last event", "Last run event", "Last run"}:
+        compact_subject, brief = _compact_run_summary(summary)
+        if compact_subject:
+            subject = compact_subject
+    elif label in {"Last skip decision", "Last skip"}:
+        compact_subject, brief = _compact_skip_summary(summary)
+        if compact_subject:
+            subject = compact_subject
+    elif label == "Last reconciliation":
+        subject = "Supervisor"
+        brief = at_local or "none"
+    return {
+        "subject": subject,
+        "brief": brief,
+        "at_local": at_local or "none",
+    }
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -302,6 +360,9 @@ class RachioSupervisorSensor(RachioSupervisorEntity, SensorEntity):
             return {
                 "supervisor_mode": data.supervisor_mode,
                 "supervisor_reason": data.supervisor_reason,
+                "data_completeness": data.data_completeness,
+                "missing_inputs": list(data.missing_inputs),
+                "runtime_integrity": data.runtime_integrity,
                 "linked_entry_title": data.linked_entry_title,
                 "linked_entry_state": data.linked_entry_state,
                 "connectivity": data.connectivity,
@@ -320,6 +381,7 @@ class RachioSupervisorSensor(RachioSupervisorEntity, SensorEntity):
                 "webhook_external_id": data.webhook_external_id,
                 "linked_entry_state": data.linked_entry_state,
                 "supervisor_reason": data.supervisor_reason,
+                "runtime_integrity": data.runtime_integrity,
             }
         if self.entity_description.key == "supervisor_mode":
             return {
@@ -346,16 +408,31 @@ class RachioSupervisorSensor(RachioSupervisorEntity, SensorEntity):
             return {
                 "last_event_at": data.last_event_at,
                 "controller_name": data.controller_name,
+                **_decision_compact_attrs(
+                    label="Last event",
+                    summary=data.last_event_summary,
+                    at_local=_format_at_local(data.last_event_at),
+                ),
             }
         if self.entity_description.key in {"last_run", "last_run_event"}:
             return {
                 "last_run_at": data.last_run_at,
                 "controller_name": data.controller_name,
+                **_decision_compact_attrs(
+                    label="Last run event" if self.entity_description.key == "last_run_event" else "Last run",
+                    summary=data.last_run_summary,
+                    at_local=_format_at_local(data.last_run_at),
+                ),
             }
         if self.entity_description.key in {"last_skip", "last_skip_decision"}:
             return {
                 "last_skip_at": data.last_skip_at,
                 "controller_name": data.controller_name,
+                **_decision_compact_attrs(
+                    label="Last skip decision" if self.entity_description.key == "last_skip_decision" else "Last skip",
+                    summary=data.last_skip_summary,
+                    at_local=_format_at_local(data.last_skip_at),
+                ),
             }
         if self.entity_description.key == "configured_zone_count":
             return {
@@ -367,6 +444,11 @@ class RachioSupervisorSensor(RachioSupervisorEntity, SensorEntity):
             return {
                 "supervisor_mode": data.supervisor_mode,
                 "supervisor_reason": data.supervisor_reason,
+                **_decision_compact_attrs(
+                    label="Last reconciliation",
+                    summary=data.last_reconciliation or "never",
+                    at_local=_format_at_local(data.last_reconciliation),
+                ),
             }
         if self.entity_description.key == "last_moisture_write":
             return {
@@ -378,21 +460,31 @@ class RachioSupervisorSensor(RachioSupervisorEntity, SensorEntity):
             return {
                 "moisture_write_queue": data.moisture_write_queue,
                 "write_back_mode_enabled": data.action_posture.endswith("write_back_available"),
+                "zero_state": data.recommended_moisture_write_count == 0
+                and data.ready_moisture_write_count == 0,
+                "moisture_review_items": list(data.moisture_review_items),
             }
         if self.entity_description.key == "moisture_write_queue":
             return {
                 "ready_moisture_write_count": data.ready_moisture_write_count,
                 "write_back_mode_enabled": data.action_posture.endswith("write_back_available"),
+                "moisture_review_items": list(data.moisture_review_items),
             }
         if self.entity_description.key == "recommended_moisture_write_count":
             return {
                 "recommended_moisture_write_queue": data.recommended_moisture_write_queue,
                 "write_back_mode_enabled": data.action_posture.endswith("write_back_available"),
+                "zero_state": data.recommended_moisture_write_count == 0
+                and data.ready_moisture_write_count == 0,
+                "moisture_review_items": list(data.moisture_review_items),
             }
         if self.entity_description.key == "recommended_moisture_write_queue":
             return {
                 "recommended_moisture_write_count": data.recommended_moisture_write_count,
                 "write_back_mode_enabled": data.action_posture.endswith("write_back_available"),
+                "zero_state": data.recommended_moisture_write_count == 0
+                and data.ready_moisture_write_count == 0,
+                "moisture_review_items": list(data.moisture_review_items),
             }
         if self.entity_description.key == "active_recommendation_count":
             return {
@@ -429,6 +521,13 @@ class RachioSupervisorSensor(RachioSupervisorEntity, SensorEntity):
                 "runtime_minutes": data.catch_up_runtime_minutes,
                 "summary": data.catch_up_summary,
                 "decision_at": data.catch_up_decision_at,
+                "subject": data.catch_up_schedule_name or "Catch-up monitor",
+                "brief": (
+                    f"ran {data.catch_up_runtime_minutes} min"
+                    if data.catch_up_evidence_status == "executed"
+                    else data.catch_up_evidence_status.replace("_", " ")
+                ),
+                "at_local": _format_at_local(data.catch_up_decision_at),
             }
         if self.entity_description.key in {
             "active_flow_alert_count",

@@ -66,6 +66,11 @@ first real runtime milestones:
 - site-level supervisor sensors now set explicit names in the entity model so
   a fresh shadow install gets stable, readable entity ids instead of generic
   registry fallbacks
+- `Health` now reflects runtime integrity only; optional rain/moisture gaps are
+  exposed as data-completeness warnings instead of top-level degradation
+- site-level moisture review now stays visible even when recommended writes are
+  `0`, so mapped schedules still expose `dry` / `target` / `wet` posture in
+  the dashboard during wet conditions
 - the supervisor now inspects recent Rachio event history for low-flow and
   high-flow alerts, compares later native calibration events against the prior
   baseline when both are present, and clears the Supervisor-side review queue
@@ -113,6 +118,9 @@ The current local verification work now includes deterministic coverage for:
 - config flow with optional rain inputs and no moisture sensors
 - options flow moisture-mapping behavior
 - site-level entity naming and state exposure
+- runtime-only health evaluation and cached-evidence freshness handling
+- site-level moisture review payload exposure even when recommendation counts
+  are zero
 - diagnostics payload shape
 - observed-rain `unknown / not_reported` semantics
 - degraded/healthy cadence transitions
@@ -245,6 +253,9 @@ Today the custom integration provides a narrow but real runtime:
   - last refresh
   - recommended moisture writes
   - recommended moisture queue
+  - ready moisture writes
+  - moisture write queue
+  - last moisture write
   - active recommendations
   - active recommendation queue
   - acknowledged recommendations
