@@ -7,13 +7,19 @@ from collections.abc import Callable
 import voluptuous as vol
 
 from homeassistant.config_entries import ConfigEntry
-from homeassistant.const import Platform
+from homeassistant.const import CONF_API_KEY, Platform
 from homeassistant.core import HomeAssistant, ServiceCall, callback
 from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers import config_validation as cv
 
-from .const import DOMAIN, SERVICE_EVALUATE_NOW
-from .coordinator import RachioSupervisorCoordinator
+from .const import (
+    CONF_ALLOW_MOISTURE_WRITE_BACK,
+    DOMAIN,
+    SERVICE_EVALUATE_NOW,
+    SERVICE_WRITE_MOISTURE_NOW,
+)
+from .coordinator import RachioSupervisorCoordinator, ScheduleSnapshot
+from .rachio_api import RachioClient
 
 PLATFORMS: list[Platform] = [Platform.SENSOR]
 
@@ -28,6 +34,75 @@ async def _async_handle_evaluate_now(hass: HomeAssistant, call: ServiceCall) -> 
         await coordinator.async_request_refresh()
 
 
+def _find_schedule_target(
+    coordinators: dict[str, RachioSupervisorCoordinator],
+    schedule_name: str,
+    site_name: str | None,
+) -> tuple[RachioSupervisorCoordinator, ScheduleSnapshot]:
+    """Resolve one schedule snapshot across loaded coordinators."""
+    matches: list[tuple[RachioSupervisorCoordinator, ScheduleSnapshot]] = []
+    for coordinator in coordinators.values():
+        if site_name and coordinator.data.site_name != site_name:
+            continue
+        for schedule in coordinator.data.schedule_snapshots:
+            if schedule.name == schedule_name:
+                matches.append((coordinator, schedule))
+    if not matches:
+        raise HomeAssistantError("No matching Rachio Supervisor schedule was found.")
+    if len(matches) > 1:
+        raise HomeAssistantError(
+            "Multiple schedules matched. Provide site_name to disambiguate."
+        )
+    return matches[0]
+
+
+async def _async_handle_write_moisture_now(
+    hass: HomeAssistant,
+    call: ServiceCall,
+) -> None:
+    """Write the currently mapped moisture value into one resolved Rachio zone."""
+    coordinators = hass.data.get(DOMAIN, {})
+    if not coordinators:
+        raise HomeAssistantError("No Rachio Supervisor entries are loaded.")
+
+    schedule_name = str(call.data["schedule_name"])
+    site_name = call.data.get("site_name")
+    coordinator, schedule = _find_schedule_target(coordinators, schedule_name, site_name)
+
+    data = {**coordinator.entry.data, **coordinator.entry.options}
+    if not data.get(CONF_ALLOW_MOISTURE_WRITE_BACK, False):
+        raise HomeAssistantError(
+            "Moisture write-back is not enabled for this Rachio Supervisor entry."
+        )
+    if not schedule.controller_zone_id:
+        raise HomeAssistantError("The selected schedule does not resolve to a Rachio zone.")
+    if schedule.moisture_value is None:
+        raise HomeAssistantError(
+            "The selected schedule does not have a usable mapped moisture value."
+        )
+    try:
+        moisture_percent = float(schedule.moisture_value)
+    except (TypeError, ValueError) as exc:
+        raise HomeAssistantError(
+            "The selected schedule does not have a numeric mapped moisture value."
+        ) from exc
+
+    linked_entry = hass.config_entries.async_get_entry(coordinator.data.rachio_config_entry_id)
+    if linked_entry is None:
+        raise HomeAssistantError("The linked Home Assistant Rachio entry was not found.")
+    api_key = linked_entry.data.get(CONF_API_KEY)
+    if not api_key:
+        raise HomeAssistantError("The linked Home Assistant Rachio entry has no API key.")
+
+    client = RachioClient(str(api_key))
+    await hass.async_add_executor_job(
+        client.set_zone_moisture_percent,
+        schedule.controller_zone_id,
+        max(0.0, min(100.0, moisture_percent)),
+    )
+    await coordinator.async_request_refresh()
+
+
 @callback
 def _async_register_services(hass: HomeAssistant) -> Callable[[], None]:
     """Register domain services once."""
@@ -40,9 +115,21 @@ def _async_register_services(hass: HomeAssistant) -> Callable[[], None]:
         _async_handle_evaluate_now,
         schema=vol.Schema({vol.Optional("entity_id"): cv.entity_ids}),
     )
+    hass.services.async_register(
+        DOMAIN,
+        SERVICE_WRITE_MOISTURE_NOW,
+        _async_handle_write_moisture_now,
+        schema=vol.Schema(
+            {
+                vol.Required("schedule_name"): cv.string,
+                vol.Optional("site_name"): cv.string,
+            }
+        ),
+    )
 
     def _remove() -> None:
         hass.services.async_remove(DOMAIN, SERVICE_EVALUATE_NOW)
+        hass.services.async_remove(DOMAIN, SERVICE_WRITE_MOISTURE_NOW)
 
     return _remove
 

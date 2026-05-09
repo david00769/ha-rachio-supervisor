@@ -21,6 +21,15 @@ class ScheduleEntityRef:
 
 
 @dataclass(frozen=True, slots=True)
+class ZoneEntityRef:
+    """Linked zone entity metadata from the built-in Rachio integration."""
+
+    entity_id: str
+    label: str
+    unique_id: str | None
+
+
+@dataclass(frozen=True, slots=True)
 class LinkedRachioEntities:
     """Grouped Rachio entities discovered from a linked config entry."""
 
@@ -30,6 +39,7 @@ class LinkedRachioEntities:
     standby_entity_id: str | None
     zone_switches: tuple[str, ...]
     schedule_switches: tuple[str, ...]
+    zone_entities: tuple[ZoneEntityRef, ...]
     schedule_entities: tuple[ScheduleEntityRef, ...]
     all_entities: tuple[str, ...]
 
@@ -77,6 +87,7 @@ def discover_linked_entities(
     standby_entity_id = None
     zone_switches: list[str] = []
     schedule_switches: list[str] = []
+    zone_entities: list[ZoneEntityRef] = []
     schedule_entities: list[ScheduleEntityRef] = []
     all_entities: list[str] = []
 
@@ -109,6 +120,13 @@ def discover_linked_entities(
                     )
                 else:
                     zone_switches.append(entity_id)
+                    zone_entities.append(
+                        ZoneEntityRef(
+                            entity_id=entity_id,
+                            label=entry.original_name or entity_id,
+                            unique_id=entry.unique_id,
+                        )
+                    )
 
     return LinkedRachioEntities(
         connectivity_entity_id=connectivity_entity_id,
@@ -117,6 +135,9 @@ def discover_linked_entities(
         standby_entity_id=standby_entity_id,
         zone_switches=tuple(sorted(zone_switches)),
         schedule_switches=tuple(sorted(schedule_switches)),
+        zone_entities=tuple(
+            sorted(zone_entities, key=lambda entity: entity.label.lower())
+        ),
         schedule_entities=tuple(
             sorted(schedule_entities, key=lambda entity: entity.label.lower())
         ),

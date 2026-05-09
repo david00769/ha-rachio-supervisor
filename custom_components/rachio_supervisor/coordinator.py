@@ -28,7 +28,12 @@ from .const import (
     DOMAIN,
     WEBHOOK_CONST_ID,
 )
-from .discovery import LinkedRachioEntities, ScheduleEntityRef, discover_linked_entities
+from .discovery import (
+    LinkedRachioEntities,
+    ScheduleEntityRef,
+    ZoneEntityRef,
+    discover_linked_entities,
+)
 from .rachio_api import RachioClient, RachioClientError
 
 TZ = ZoneInfo("UTC")
@@ -53,10 +58,13 @@ class ScheduleSnapshot:
     policy_mode: str
     policy_basis: str
     schedule_entity_id: str | None
+    zone_entity_id: str | None
+    controller_zone_id: str | None
     moisture_entity_id: str | None
     moisture_value: str | None
     moisture_band: str
     moisture_status: str
+    moisture_write_back_ready: str
     last_run_at: str | None
     last_skip_at: str | None
     summary: str
@@ -227,6 +235,53 @@ def match_schedule_entity(
     return best[2]
 
 
+def match_zone_entity(
+    schedule_name: str,
+    linked_entities: LinkedRachioEntities,
+) -> ZoneEntityRef | None:
+    """Match a Rachio API schedule to a discovered HA zone entity."""
+    schedule_words = normalize_words(schedule_name)
+    candidates: list[tuple[int, int, ZoneEntityRef]] = []
+    for entity in linked_entities.zone_entities:
+        entity_words = normalize_words(entity.label)
+        overlap = len(schedule_words & entity_words)
+        exactish = int(schedule_words == entity_words and bool(schedule_words))
+        candidates.append((exactish, overlap, entity))
+    if not candidates:
+        return None
+    candidates.sort(key=lambda item: (item[0], item[1]), reverse=True)
+    best = candidates[0]
+    if best[0] == 0 and best[1] == 0:
+        return None
+    return best[2]
+
+
+def match_controller_zone(
+    schedule_name: str,
+    controller: dict[str, object],
+) -> str | None:
+    """Match a schedule name to a controller zone id by name overlap."""
+    schedule_words = normalize_words(schedule_name)
+    candidates: list[tuple[int, int, str]] = []
+    for zone in controller.get("zones", []):
+        if not zone.get("enabled", True):
+            continue
+        zone_name = str(zone.get("name", ""))
+        zone_words = normalize_words(zone_name)
+        overlap = len(schedule_words & zone_words)
+        exactish = int(schedule_words == zone_words and bool(schedule_words))
+        zone_id = str(zone.get("id", ""))
+        if zone_id:
+            candidates.append((exactish, overlap, zone_id))
+    if not candidates:
+        return None
+    candidates.sort(key=lambda item: (item[0], item[1]), reverse=True)
+    best = candidates[0]
+    if best[0] == 0 and best[1] == 0:
+        return None
+    return best[2]
+
+
 def match_moisture_entity(
     hass: HomeAssistant,
     schedule_name: str,
@@ -299,10 +354,13 @@ def apply_moisture_mapping(
                 policy_mode=schedule.policy_mode,
                 policy_basis=schedule.policy_basis,
                 schedule_entity_id=schedule.schedule_entity_id,
+                zone_entity_id=schedule.zone_entity_id,
+                controller_zone_id=schedule.controller_zone_id,
                 moisture_entity_id=moisture_entity_id,
                 moisture_value=moisture_value,
                 moisture_band=moisture_band,
                 moisture_status=moisture_status,
+                moisture_write_back_ready=schedule.moisture_write_back_ready,
                 last_run_at=schedule.last_run_at,
                 last_skip_at=schedule.last_skip_at,
                 summary=schedule.summary,
@@ -423,15 +481,21 @@ def build_rachio_evidence(
         rule_id = str(rule["id"])
         name = str(rule.get("name", rule_id))
         matched_schedule_entity = match_schedule_entity(name, linked_entities)
+        matched_zone_entity = match_zone_entity(name, linked_entities)
+        controller_zone_id = match_controller_zone(name, controller)
         schedule_entity_id = (
             matched_schedule_entity.entity_id if matched_schedule_entity else None
         )
+        zone_entity_id = matched_zone_entity.entity_id if matched_zone_entity else None
         if schedule_entity_id and schedule_entity_id in auto_catch_up_schedule_entities:
             policy_mode = "auto_catch_up_enabled"
             policy_basis = "Configured automatic catch-up opt-in."
         else:
             policy_mode = "observe_only"
             policy_basis = "Default observe-first schedule posture."
+        moisture_write_back_ready = (
+            "ready" if controller_zone_id and zone_entity_id else "zone_unresolved"
+        )
         run_event = completed_by_schedule.get(rule_id)
         skip_event = skipped_by_schedule.get(rule_id)
         observed_mm = threshold_mm = None
@@ -470,10 +534,13 @@ def build_rachio_evidence(
                 policy_mode=policy_mode,
                 policy_basis=policy_basis,
                 schedule_entity_id=schedule_entity_id,
+                zone_entity_id=zone_entity_id,
+                controller_zone_id=controller_zone_id,
                 moisture_entity_id=None,
                 moisture_value=None,
                 moisture_band="unmapped",
                 moisture_status="Moisture mapping not yet evaluated.",
+                moisture_write_back_ready=moisture_write_back_ready,
                 last_run_at=event_dt(run_event).isoformat() if run_event else None,
                 last_skip_at=event_dt(skip_event).isoformat() if skip_event else None,
                 summary=reason,

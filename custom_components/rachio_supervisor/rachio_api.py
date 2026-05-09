@@ -10,6 +10,7 @@ from typing import Any
 
 PERSON_INFO_URL = "https://api.rach.io/1/public/person/info"
 PERSON_URL = "https://api.rach.io/1/public/person/{person_id}"
+ZONE_SET_MOISTURE_URL = "https://api.rach.io/1/public/zone/setMoisturePercent"
 DEVICE_EVENTS_URL = (
     "https://api.rach.io/1/public/device/{device_id}/event"
     "?startTime={start_ms}&endTime={end_ms}"
@@ -28,8 +29,21 @@ class RachioClient:
         self._token = token
 
     def _http_json(self, url: str) -> Any:
+        return self._http_request_json("GET", url)
+
+    def _http_request_json(
+        self,
+        method: str,
+        url: str,
+        payload: dict[str, Any] | None = None,
+    ) -> Any:
+        data = None
+        if payload is not None:
+            data = json.dumps(payload).encode("utf-8")
         request = urllib.request.Request(
             url,
+            method=method,
+            data=data,
             headers={
                 "Authorization": f"Bearer {self._token}",
                 "Content-Type": "application/json",
@@ -40,9 +54,11 @@ class RachioClient:
                 payload = response.read().decode("utf-8")
         except urllib.error.HTTPError as exc:
             detail = exc.read().decode("utf-8", errors="replace")
-            raise RachioClientError(f"GET {url} failed: {exc.code} {detail[:300]}") from exc
+            raise RachioClientError(
+                f"{method} {url} failed: {exc.code} {detail[:300]}"
+            ) from exc
         except urllib.error.URLError as exc:
-            raise RachioClientError(f"GET {url} failed: {exc}") from exc
+            raise RachioClientError(f"{method} {url} failed: {exc}") from exc
         return json.loads(payload) if payload else None
 
     def get_person_info(self) -> dict[str, Any]:
@@ -74,3 +90,11 @@ class RachioClient:
             DEVICE_EVENTS_URL.format(device_id=device_id, start_ms=start_ms, end_ms=end_ms)
         )
         return data if isinstance(data, list) else []
+
+    def set_zone_moisture_percent(self, zone_id: str, moisture_percent: float) -> None:
+        """Write a moisture percentage into a Rachio zone."""
+        self._http_request_json(
+            "PUT",
+            ZONE_SET_MOISTURE_URL,
+            {"id": zone_id, "percent": moisture_percent},
+        )

@@ -4,3 +4,20 @@ evaluate_now:
   target:
     entity:
       integration: rachio_supervisor
+
+write_moisture_now:
+  name: Write moisture now
+  description: Write the currently mapped moisture value into the resolved Rachio zone for one schedule.
+  fields:
+    schedule_name:
+      name: Schedule name
+      description: Exact Rachio schedule name from the supervisor sensors.
+      required: true
+      selector:
+        text:
+    site_name:
+      name: Site name
+      description: Optional site label to disambiguate duplicate schedule names across entries.
+      required: false
+      selector:
+        text:

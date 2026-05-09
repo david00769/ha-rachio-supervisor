@@ -40,6 +40,9 @@ first real runtime milestones:
 - setup/options now also accept candidate moisture sensors, and schedule-level
   sensors now expose moisture mapping plus a simple `dry` / `target` / `wet`
   band derived from the mapped sensor value
+- the integration now exposes a manual `write_moisture_now` service that writes
+  the currently mapped moisture value into one resolved Rachio zone, but only
+  when moisture write-back mode is enabled for that entry
 - schedule-level sensors now expose:
   - status
   - reason
@@ -116,10 +119,11 @@ Today the custom integration provides a narrow but real runtime:
   - moisture
   - catch-up candidate
 
-This milestone is still intentionally narrow. It does not yet execute catch-up
-actions or moisture write-back. Moisture support currently means candidate
-sensor selection, name-based schedule matching, and coarse moisture-band state;
-it does not yet write moisture into Rachio or run watering on its own.
+This milestone is still intentionally narrow. It does not yet execute automatic
+catch-up or broad autonomous moisture write-back. Moisture support currently
+means candidate sensor selection, name-based schedule matching, coarse
+moisture-band state, plus a manual write-back service. It still does not
+trigger watering on its own.
 
 ## HACS status
 

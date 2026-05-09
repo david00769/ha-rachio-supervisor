@@ -26,3 +26,4 @@ DEFAULT_AUTO_CATCH_UP_SCHEDULES: list[str] = []
 DEFAULT_MOISTURE_SENSOR_ENTITIES: list[str] = []
 
 SERVICE_EVALUATE_NOW = "evaluate_now"
+SERVICE_WRITE_MOISTURE_NOW = "write_moisture_now"
