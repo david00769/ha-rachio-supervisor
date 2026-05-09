@@ -5,6 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 import re
+import urllib.parse
 from zoneinfo import ZoneInfo
 
 from homeassistant.config_entries import ConfigEntry, ConfigEntryState
@@ -15,18 +16,22 @@ from homeassistant.helpers.update_coordinator import DataUpdateCoordinator
 
 from .const import (
     CONF_ALLOW_MOISTURE_WRITE_BACK,
+    CONF_CLOUDHOOK_URL,
     CONF_OBSERVE_FIRST,
     CONF_RACHIO_CONFIG_ENTRY_ID,
     CONF_RAIN_ACTUALS_ENTITY,
     CONF_SITE_NAME,
+    CONF_WEBHOOK_ID,
     CONF_ZONE_COUNT,
     DOMAIN,
+    WEBHOOK_CONST_ID,
 )
 from .discovery import discover_linked_entities
 from .rachio_api import RachioClient, RachioClientError
 
 TZ = ZoneInfo("UTC")
 EVENT_LOOKBACK_HOURS = 96
+WORD_RE = re.compile(r"[a-z0-9]+")
 
 RAIN_MM_RE = re.compile(r"observed ([0-9.]+) mm(?: and predicted ([0-9.]+) mm)?")
 THRESHOLD_MM_RE = re.compile(r"threshold of ([0-9.]+) mm")
@@ -61,6 +66,9 @@ class RachioEvidenceSnapshot:
     last_skip_summary: str
     last_skip_at: str | None
     webhook_count: int
+    webhook_health: str
+    webhook_url: str | None
+    webhook_external_id: str | None
     schedule_snapshots: tuple[ScheduleSnapshot, ...]
 
 
@@ -96,6 +104,9 @@ class SupervisorSnapshot:
     last_skip_summary: str
     last_skip_at: str | None
     webhook_count: int
+    webhook_health: str
+    webhook_url: str | None
+    webhook_external_id: str | None
     last_refresh: str
     notes: tuple[str, ...]
     discovered_entities: dict[str, object]
@@ -154,24 +165,58 @@ def parse_skip_summary(summary: str) -> tuple[float | None, float | None]:
     return observed, threshold
 
 
+def normalize_words(value: str) -> set[str]:
+    """Normalize a string into lowercase word tokens."""
+    return set(WORD_RE.findall(value.lower()))
+
+
+def webhook_matches(
+    hook: dict[str, object],
+    expected_webhook_id: str | None,
+    expected_cloudhook_url: str | None,
+) -> bool:
+    """Return whether a Rachio webhook matches the linked HA webhook surface."""
+    hook_id = str(hook.get("id", ""))
+    hook_url = str(hook.get("url", ""))
+    external_id = str(hook.get("externalId", ""))
+    expected_host = ""
+    if expected_cloudhook_url:
+        expected_host = urllib.parse.urlparse(expected_cloudhook_url).netloc
+    hook_host = urllib.parse.urlparse(hook_url).netloc
+
+    if expected_webhook_id and hook_id == expected_webhook_id:
+        return True
+    if expected_cloudhook_url and hook_url == expected_cloudhook_url:
+        return True
+    if external_id.startswith(WEBHOOK_CONST_ID):
+        if expected_host:
+            return expected_host == hook_host
+        return True
+    return False
+
+
 def choose_controller(
     devices: list[dict[str, object]],
     expected_zone_count: int,
+    preferred_name: str,
 ) -> dict[str, object] | None:
     """Choose the best sprinkler controller for the linked site."""
-    candidates: list[tuple[int, int, dict[str, object]]] = []
+    preferred_words = normalize_words(preferred_name)
+    candidates: list[tuple[int, int, int, dict[str, object]]] = []
     for device in devices:
         zones = device.get("zones", [])
         if not isinstance(zones, list) or not zones:
             continue
         enabled_zones = [zone for zone in zones if zone.get("enabled", True)]
         enabled_count = len(enabled_zones)
+        name_words = normalize_words(str(device.get("name", "")))
+        overlap = len(preferred_words & name_words)
         score = -abs(enabled_count - expected_zone_count)
-        candidates.append((score, enabled_count, device))
+        candidates.append((overlap, score, enabled_count, device))
     if not candidates:
         return None
-    candidates.sort(key=lambda item: (item[0], item[1]), reverse=True)
-    return candidates[0][2]
+    candidates.sort(key=lambda item: (item[0], item[1], item[2]), reverse=True)
+    return candidates[0][3]
 
 
 def build_rachio_evidence(
@@ -179,10 +224,13 @@ def build_rachio_evidence(
     expected_zone_count: int,
     actual_rain_value: str,
     controller_available: bool,
+    preferred_name: str,
+    expected_webhook_id: str | None,
+    expected_cloudhook_url: str | None,
 ) -> RachioEvidenceSnapshot:
     """Build a site-level evidence snapshot from the public Rachio API."""
     devices = client.list_person_devices()
-    controller = choose_controller(devices, expected_zone_count)
+    controller = choose_controller(devices, expected_zone_count, preferred_name)
     if controller is None:
         raise RachioClientError("No sprinkler controller with enabled zones was found.")
 
@@ -195,6 +243,20 @@ def build_rachio_evidence(
         end=now,
     )
     webhooks = client.list_device_webhooks(controller_id)
+    matching_webhook = next(
+        (
+            hook
+            for hook in webhooks
+            if webhook_matches(hook, expected_webhook_id, expected_cloudhook_url)
+        ),
+        None,
+    )
+    if matching_webhook:
+        webhook_health = "registered"
+    elif webhooks:
+        webhook_health = "mismatch"
+    else:
+        webhook_health = "missing"
 
     latest_event = max(events, key=lambda event: int(event["eventDate"]), default=None)
     latest_run = max(
@@ -291,6 +353,11 @@ def build_rachio_evidence(
         last_skip_summary=summarize_event(latest_skip),
         last_skip_at=event_dt(latest_skip).isoformat() if latest_skip else None,
         webhook_count=len(webhooks),
+        webhook_health=webhook_health,
+        webhook_url=str(matching_webhook.get("url", "")) if matching_webhook else None,
+        webhook_external_id=str(matching_webhook.get("externalId", ""))
+        if matching_webhook
+        else None,
         schedule_snapshots=tuple(schedule_snapshots),
     )
 
@@ -395,9 +462,16 @@ class RachioSupervisorCoordinator(DataUpdateCoordinator[SupervisorSnapshot]):
         last_skip_summary = "unavailable"
         last_skip_at = None
         webhook_count = 0
+        webhook_health = "unknown"
+        webhook_url = None
+        webhook_external_id = None
         schedule_snapshots: tuple[ScheduleSnapshot, ...] = ()
 
         api_key = linked_entry.data.get(CONF_API_KEY) if linked_entry else None
+        expected_webhook_id = linked_entry.data.get(CONF_WEBHOOK_ID) if linked_entry else None
+        expected_cloudhook_url = (
+            linked_entry.data.get(CONF_CLOUDHOOK_URL) if linked_entry else None
+        )
         if not api_key:
             notes.append("Linked Rachio entry does not expose an API key to the supervisor.")
         elif linked_entry and linked_entry.state == ConfigEntryState.LOADED:
@@ -408,6 +482,9 @@ class RachioSupervisorCoordinator(DataUpdateCoordinator[SupervisorSnapshot]):
                     len(linked_entities.zone_switches),
                     actual_rain_value,
                     connectivity not in {"off", "missing", "unavailable"},
+                    data.get(CONF_SITE_NAME, self.entry.title),
+                    str(expected_webhook_id) if expected_webhook_id else None,
+                    str(expected_cloudhook_url) if expected_cloudhook_url else None,
                 )
             except RachioClientError as err:
                 notes.append(f"Rachio API evidence fetch failed: {err}")
@@ -423,7 +500,18 @@ class RachioSupervisorCoordinator(DataUpdateCoordinator[SupervisorSnapshot]):
                 last_skip_summary = evidence.last_skip_summary
                 last_skip_at = evidence.last_skip_at
                 webhook_count = evidence.webhook_count
+                webhook_health = evidence.webhook_health
+                webhook_url = evidence.webhook_url
+                webhook_external_id = evidence.webhook_external_id
                 schedule_snapshots = evidence.schedule_snapshots
+                if webhook_health == "mismatch":
+                    notes.append(
+                        "Rachio controller has webhooks registered, but none matched the linked HA webhook id/url."
+                    )
+                elif webhook_health == "missing":
+                    notes.append("No Rachio webhook registration was found for the linked controller.")
+                if webhook_health != "registered" and health == "healthy":
+                    health = "degraded"
 
         return SupervisorSnapshot(
             health=health,
@@ -454,6 +542,9 @@ class RachioSupervisorCoordinator(DataUpdateCoordinator[SupervisorSnapshot]):
             last_skip_summary=last_skip_summary,
             last_skip_at=last_skip_at,
             webhook_count=webhook_count,
+            webhook_health=webhook_health,
+            webhook_url=webhook_url,
+            webhook_external_id=webhook_external_id,
             last_refresh=datetime.now(tz=TZ).isoformat(),
             notes=tuple(notes),
             discovered_entities={

@@ -7,3 +7,4 @@
 - Documented the product boundary: Rachio-first, supervisor-first, observe-first, with opt-in catch-up and optional moisture write-back.
 - Added the first runtime milestone: config flow now links to an existing HA `rachio` entry, the coordinator discovers the linked entity surface, and site-level evidence sensors now reflect real HA state instead of placeholder scaffold values.
 - Added the second runtime milestone: the coordinator now reuses the linked HA `rachio` API key to read real Rachio event history, expose `last run` / `last skip`, and publish schedule-level status, reason, and catch-up-candidate sensors for active schedules.
+- Added the third runtime milestone: the coordinator now exposes webhook registration health, uses site-name-aware controller selection for multi-controller Rachio accounts, and publishes webhook match context through the site-level diagnostic surface.

@@ -31,6 +31,12 @@ DESCRIPTIONS = (
         value_fn=lambda data: data.health,
     ),
     RachioSupervisorSensorDescription(
+        key="webhook_health",
+        translation_key="webhook_health",
+        entity_category=EntityCategory.DIAGNOSTIC,
+        value_fn=lambda data: data.webhook_health,
+    ),
+    RachioSupervisorSensorDescription(
         key="mode",
         translation_key="mode",
         entity_category=EntityCategory.DIAGNOSTIC,
@@ -143,6 +149,13 @@ class RachioSupervisorSensor(RachioSupervisorEntity, SensorEntity):
                 "controller_id": data.controller_id,
                 "webhook_count": data.webhook_count,
                 "notes": list(data.notes),
+            }
+        if self.entity_description.key == "webhook_health":
+            return {
+                "webhook_count": data.webhook_count,
+                "webhook_url": data.webhook_url,
+                "webhook_external_id": data.webhook_external_id,
+                "linked_entry_state": data.linked_entry_state,
             }
         if self.entity_description.key == "actual_rain_24h":
             return {

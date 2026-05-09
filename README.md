@@ -29,6 +29,11 @@ first real runtime milestones:
 - the coordinator now reads real Rachio public API event history using the
   linked HA `rachio` API key
 - site-level sensors now expose `last run` and `last skip`
+- multi-controller accounts now use site-name-aware controller selection instead
+  of zone-count-only matching
+- site-level sensors now expose webhook registration health using the linked HA
+  Rachio webhook id/url plus the Home Assistant-managed
+  `homeassistant.rachio:` webhook prefix
 - schedule-level sensors now expose:
   - status
   - reason
@@ -38,7 +43,7 @@ The deeper irrigation logic is still pending:
 
 - richer catch-up decision engine
 - moisture write-back flows
-- webhook-quality reasoning
+- deeper webhook-quality reasoning beyond registration health
 
 ## Product stance
 
@@ -86,6 +91,7 @@ Today the custom integration provides a narrow but real runtime:
 - actual rainfall is mapped from a selected sensor entity
 - the coordinator inspects the linked Rachio entry and Rachio public API and publishes:
   - health
+  - webhook health
   - linked Rachio entry
   - operating mode
   - action posture
@@ -101,8 +107,8 @@ Today the custom integration provides a narrow but real runtime:
   - catch-up candidate
 
 This milestone is still intentionally narrow. It does not yet execute catch-up
-actions or moisture write-back, and it does not yet publish the full webhook
-health model from the private Sugarloaf supervisor.
+actions or moisture write-back, and its webhook reasoning currently stops at
+registration/match health rather than full event-freshness enforcement.
 
 ## HACS status
 

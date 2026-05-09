@@ -39,6 +39,9 @@
       "health": {
         "name": "Health"
       },
+      "webhook_health": {
+        "name": "Webhook health"
+      },
       "mode": {
         "name": "Operating mode"
       },
