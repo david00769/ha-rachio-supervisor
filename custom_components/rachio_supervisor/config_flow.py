@@ -54,6 +54,18 @@ def _flow_schema(
     finalized.
     """
     defaults = defaults or {}
+    available_rachio_entry_ids = {value for value, _label in rachio_options}
+    selected_rachio_entry_id = defaults.get(CONF_RACHIO_CONFIG_ENTRY_ID)
+    if selected_rachio_entry_id not in available_rachio_entry_ids and rachio_options:
+        selected_rachio_entry_id = rachio_options[0][0]
+
+    moisture_defaults = defaults.get(
+        CONF_MOISTURE_SENSOR_ENTITIES,
+        DEFAULT_MOISTURE_SENSOR_ENTITIES,
+    )
+    if not isinstance(moisture_defaults, list):
+        moisture_defaults = list(moisture_defaults or [])
+
     schema: dict[Any, Any] = {
         vol.Required(
             CONF_SITE_NAME,
@@ -63,10 +75,7 @@ def _flow_schema(
         ),
         vol.Required(
             CONF_RACHIO_CONFIG_ENTRY_ID,
-            default=defaults.get(
-                CONF_RACHIO_CONFIG_ENTRY_ID,
-                rachio_options[0][0] if rachio_options else "",
-            ),
+            default=selected_rachio_entry_id or "",
         ): selector.SelectSelector(
             selector.SelectSelectorConfig(
                 options=[
@@ -129,10 +138,7 @@ def _flow_schema(
         ),
         vol.Optional(
             CONF_MOISTURE_SENSOR_ENTITIES,
-            default=defaults.get(
-                CONF_MOISTURE_SENSOR_ENTITIES,
-                DEFAULT_MOISTURE_SENSOR_ENTITIES,
-            ),
+            default=moisture_defaults,
         ): selector.EntitySelector(
             selector.EntitySelectorConfig(domain="sensor", multiple=True)
         ),
@@ -368,6 +374,8 @@ class RachioSupervisorOptionsFlow(config_entries.OptionsFlow):
 
         defaults = {**self.config_entry.data, **self.config_entry.options}
         options = rachio_entry_options(self.hass)
+        if not options:
+            return self.async_abort(reason="no_rachio_entries")
         return self.async_show_form(
             step_id="init",
             data_schema=_flow_schema(options, defaults),

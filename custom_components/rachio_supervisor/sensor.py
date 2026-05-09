@@ -358,6 +358,7 @@ class RachioSupervisorSensor(RachioSupervisorEntity, SensorEntity):
         data = self.coordinator.data
         if self.entity_description.key == "health":
             return {
+                "plain_english": "Overall supervisor runtime integrity: linked entry, webhook registration, event freshness, and reconcile/API health.",
                 "supervisor_mode": data.supervisor_mode,
                 "supervisor_reason": data.supervisor_reason,
                 "data_completeness": data.data_completeness,
@@ -376,6 +377,7 @@ class RachioSupervisorSensor(RachioSupervisorEntity, SensorEntity):
             }
         if self.entity_description.key == "webhook_health":
             return {
+                "plain_english": "Whether the Home Assistant-managed Rachio webhook registration still looks valid and current.",
                 "webhook_count": data.webhook_count,
                 "webhook_url": data.webhook_url,
                 "webhook_external_id": data.webhook_external_id,

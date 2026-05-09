@@ -37,6 +37,8 @@ Health contract:
 - missing rain or moisture inputs are warnings, not top-level degradation
 - the dashboard should render `supervisor_reason` and any `missing_inputs`
   directly below the posture rail so the operator does not need Developer Tools
+- `Webhook health` is narrower than `Health`; it only answers whether the HA-
+  managed Rachio webhook registration still looks valid
 
 ## Primary operator questions
 

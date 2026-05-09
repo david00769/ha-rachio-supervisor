@@ -23,6 +23,10 @@ views:
             content: |
               {% set reason = state_attr('sensor.rachio_site_health', 'supervisor_reason') or 'No runtime explanation available.' %}
               {% set missing = state_attr('sensor.rachio_site_health', 'missing_inputs') or [] %}
+              **What these mean**
+              - `Health`: overall supervisor runtime integrity
+              - `Webhook health`: whether the HA-managed Rachio webhook still looks valid
+
               **Runtime posture**  
               {{ reason }}
 

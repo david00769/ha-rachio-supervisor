@@ -68,6 +68,9 @@ first real runtime milestones:
   registry fallbacks
 - `Health` now reflects runtime integrity only; optional rain/moisture gaps are
   exposed as data-completeness warnings instead of top-level degradation
+- `Webhook health` remains a narrower signal than `Health`; it only reports
+  whether the Home Assistant-managed Rachio webhook registration still looks
+  valid
 - site-level moisture review now stays visible even when recommended writes are
   `0`, so mapped schedules still expose `dry` / `target` / `wet` posture in
   the dashboard during wet conditions

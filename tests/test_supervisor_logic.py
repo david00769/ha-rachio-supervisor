@@ -87,6 +87,9 @@ def _install_homeassistant_stubs() -> None:
             return {"type": "abort", "reason": reason}
 
     class OptionsFlow:
+        def async_abort(self, *, reason: str):
+            return {"type": "abort", "reason": reason}
+
         def async_show_form(self, *, step_id: str, data_schema=None, description_placeholders=None):
             return {
                 "type": "form",
@@ -859,6 +862,41 @@ class ConfigFlowBehaviorTests(unittest.TestCase):
 
         self.assertEqual(result["type"], "create_entry")
         self.assertEqual(result["data"]["schedule_moisture_map"], {})
+
+    def test_options_flow_aborts_without_linked_rachio_entries(self) -> None:
+        entry = SimpleNamespace(data={"site_name": "Sugarloaf"}, options={})
+        flow = config_flow.RachioSupervisorOptionsFlow(entry)
+        flow.hass = self._hass()
+
+        with patch.object(config_flow, "rachio_entry_options", return_value=[]):
+            result = asyncio.run(flow.async_step_init())
+
+        self.assertEqual(result["type"], "abort")
+        self.assertEqual(result["reason"], "no_rachio_entries")
+
+    def test_options_flow_recovers_when_saved_linked_entry_is_missing(self) -> None:
+        entry = SimpleNamespace(
+            data={"site_name": "Sugarloaf", "rachio_config_entry_id": "missing-entry"},
+            options={},
+        )
+        flow = config_flow.RachioSupervisorOptionsFlow(entry)
+        flow.hass = self._hass()
+
+        with patch.object(
+            config_flow,
+            "rachio_entry_options",
+            return_value=[("entry-1", "Sugarloaf Rachio")],
+        ):
+            result = asyncio.run(flow.async_step_init())
+
+        self.assertEqual(result["type"], "form")
+        schema_markers = list(result["data_schema"].value.keys())
+        linked_marker = next(
+            marker
+            for marker in schema_markers
+            if getattr(marker, "value", None) == "rachio_config_entry_id"
+        )
+        self.assertEqual(linked_marker.default, "entry-1")
 
 
 class DiagnosticsAndEntityTests(unittest.TestCase):
