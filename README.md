@@ -63,6 +63,9 @@ first real runtime milestones:
 - the integration now also exposes parity-oriented supervisor surfaces for
   `last event`, `last reconciliation`, `observed rain 24h`, `catch-up
   evidence`, `last catch-up decision`, and `supervisor mode`
+- site-level supervisor sensors now set explicit names in the entity model so
+  a fresh shadow install gets stable, readable entity ids instead of generic
+  registry fallbacks
 - the supervisor now inspects recent Rachio event history for low-flow and
   high-flow alerts, compares later native calibration events against the prior
   baseline when both are present, and clears the Supervisor-side review queue

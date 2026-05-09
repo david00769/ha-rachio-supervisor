@@ -15,6 +15,41 @@ from .const import DOMAIN
 from .coordinator import RachioSupervisorCoordinator, SupervisorSnapshot
 from .entity import RachioSupervisorEntity
 
+SITE_SENSOR_NAMES = {
+    "health": "Health",
+    "webhook_health": "Webhook health",
+    "supervisor_mode": "Supervisor mode",
+    "mode": "Operating mode",
+    "linked_rachio_entry": "Linked Rachio entry",
+    "action_posture": "Action posture",
+    "rain_actuals_source": "Rain actuals source",
+    "actual_rain_24h": "Actual rain, 24h",
+    "observed_rain_24h": "Observed rain, 24h",
+    "last_event": "Last event",
+    "last_run": "Last run",
+    "last_run_event": "Last run event",
+    "last_skip": "Last skip",
+    "last_skip_decision": "Last skip decision",
+    "active_zone_count": "Active zones",
+    "configured_zone_count": "Configured zones",
+    "last_reconciliation": "Last reconciliation",
+    "last_refresh": "Last refresh",
+    "last_moisture_write": "Last moisture write",
+    "ready_moisture_write_count": "Ready moisture writes",
+    "moisture_write_queue": "Moisture write queue",
+    "recommended_moisture_write_count": "Recommended moisture writes",
+    "recommended_moisture_write_queue": "Recommended moisture queue",
+    "active_recommendation_count": "Active recommendations",
+    "active_recommendation_queue": "Active recommendation queue",
+    "acknowledged_recommendation_count": "Acknowledged recommendations",
+    "acknowledged_recommendation_queue": "Acknowledged recommendation queue",
+    "catch_up_evidence": "Catch-up evidence",
+    "last_catch_up_decision": "Last catch-up decision",
+    "active_flow_alert_count": "Active flow alerts",
+    "flow_alert_queue": "Flow alert queue",
+    "last_flow_alert_decision": "Last flow alert decision",
+}
+
 
 @dataclass(frozen=True, kw_only=True)
 class RachioSupervisorSensorDescription(SensorEntityDescription):
@@ -247,6 +282,11 @@ class RachioSupervisorSensor(RachioSupervisorEntity, SensorEntity):
     ) -> None:
         super().__init__(coordinator)
         self.entity_description = description
+        # Custom integrations can lose translation-derived names during early
+        # shadow installs and then register generic entity IDs like
+        # `sensor.sugarloaf_8`. Set the public name explicitly so a fresh entry
+        # gets stable, parity-friendly entity IDs.
+        self._attr_name = SITE_SENSOR_NAMES[description.key]
         self._attr_unique_id = f"{coordinator.entry.entry_id}_{description.key}"
 
     @property
