@@ -87,6 +87,10 @@ def _install_homeassistant_stubs() -> None:
             return {"type": "abort", "reason": reason}
 
     class OptionsFlow:
+        @property
+        def config_entry(self):
+            return getattr(self, "_config_entry", None)
+
         def async_abort(self, *, reason: str):
             return {"type": "abort", "reason": reason}
 
@@ -862,6 +866,13 @@ class ConfigFlowBehaviorTests(unittest.TestCase):
 
         self.assertEqual(result["type"], "create_entry")
         self.assertEqual(result["data"]["schedule_moisture_map"], {})
+
+    def test_options_flow_uses_private_entry_storage(self) -> None:
+        entry = SimpleNamespace(data={"site_name": "Sugarloaf"}, options={})
+        flow = config_flow.RachioSupervisorOptionsFlow(entry)
+
+        self.assertIs(flow._entry, entry)
+        self.assertIsNone(flow.config_entry)
 
     def test_options_flow_aborts_without_linked_rachio_entries(self) -> None:
         entry = SimpleNamespace(data={"site_name": "Sugarloaf"}, options={})

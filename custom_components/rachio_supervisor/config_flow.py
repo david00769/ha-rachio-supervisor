@@ -359,7 +359,7 @@ class RachioSupervisorOptionsFlow(config_entries.OptionsFlow):
     """Handle options for Rachio Supervisor."""
 
     def __init__(self, config_entry: config_entries.ConfigEntry) -> None:
-        self.config_entry = config_entry
+        self._entry = config_entry
         self._basic_input: dict[str, Any] = {}
         self._policy_input: dict[str, Any] = {}
         self._schedule_options: list[tuple[str, str]] = []
@@ -372,7 +372,7 @@ class RachioSupervisorOptionsFlow(config_entries.OptionsFlow):
             self._basic_input = dict(user_input)
             return await self.async_step_policy()
 
-        defaults = {**self.config_entry.data, **self.config_entry.options}
+        defaults = {**self._entry.data, **self._entry.options}
         options = rachio_entry_options(self.hass)
         if not options:
             return self.async_abort(reason="no_rachio_entries")
@@ -383,7 +383,7 @@ class RachioSupervisorOptionsFlow(config_entries.OptionsFlow):
 
     async def async_step_policy(self, user_input: dict[str, Any] | None = None):
         """Manage schedule policy options."""
-        defaults = {**self.config_entry.data, **self.config_entry.options}
+        defaults = {**self._entry.data, **self._entry.options}
         selected_entry_id = self._basic_input.get(
             CONF_RACHIO_CONFIG_ENTRY_ID,
             defaults.get(CONF_RACHIO_CONFIG_ENTRY_ID, ""),
@@ -412,7 +412,7 @@ class RachioSupervisorOptionsFlow(config_entries.OptionsFlow):
 
     async def async_step_moisture_map(self, user_input: dict[str, Any] | None = None):
         """Manage explicit schedule-to-moisture mapping options."""
-        defaults = {**self.config_entry.data, **self.config_entry.options}
+        defaults = {**self._entry.data, **self._entry.options}
         moisture_candidates = [
             entity_id
             for entity_id in self._basic_input.get(
