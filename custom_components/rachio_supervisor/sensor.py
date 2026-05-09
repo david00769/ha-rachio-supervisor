@@ -108,6 +108,7 @@ async def async_setup_entry(
         for suffix, label in (
             ("status", "Status"),
             ("reason", "Reason"),
+            ("policy_mode", "Policy"),
             ("catch_up_candidate", "Catch-up candidate"),
         )
     )
@@ -223,6 +224,9 @@ class RachioSupervisorScheduleSensor(RachioSupervisorEntity, SensorEntity):
         return {
             "rule_id": schedule.rule_id,
             "schedule_name": schedule.name,
+            "schedule_entity_id": schedule.schedule_entity_id,
+            "policy_mode": schedule.policy_mode,
+            "policy_basis": schedule.policy_basis,
             "last_run_at": schedule.last_run_at,
             "last_skip_at": schedule.last_skip_at,
             "observed_mm": schedule.observed_mm,

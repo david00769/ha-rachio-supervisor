@@ -12,17 +12,19 @@ from homeassistant.util import slugify
 
 from .const import (
     CONF_ALLOW_MOISTURE_WRITE_BACK,
+    CONF_AUTO_CATCH_UP_SCHEDULES,
     CONF_OBSERVE_FIRST,
     CONF_RACHIO_CONFIG_ENTRY_ID,
     CONF_RAIN_ACTUALS_ENTITY,
     CONF_SITE_NAME,
     CONF_ZONE_COUNT,
     DEFAULT_ALLOW_MOISTURE_WRITE_BACK,
+    DEFAULT_AUTO_CATCH_UP_SCHEDULES,
     DEFAULT_OBSERVE_FIRST,
     DEFAULT_ZONE_COUNT,
     DOMAIN,
 )
-from .discovery import rachio_entry_options
+from .discovery import rachio_entry_options, schedule_entity_options
 
 
 def _flow_schema(
@@ -81,11 +83,42 @@ def _flow_schema(
     )
 
 
+def _policy_schema(
+    schedule_options: list[tuple[str, str]],
+    defaults: dict[str, Any] | None = None,
+) -> vol.Schema:
+    """Build the schedule policy schema."""
+    defaults = defaults or {}
+    return vol.Schema(
+        {
+            vol.Required(
+                CONF_AUTO_CATCH_UP_SCHEDULES,
+                default=defaults.get(
+                    CONF_AUTO_CATCH_UP_SCHEDULES,
+                    DEFAULT_AUTO_CATCH_UP_SCHEDULES,
+                ),
+            ): selector.SelectSelector(
+                selector.SelectSelectorConfig(
+                    options=[
+                        selector.SelectOptionDict(value=value, label=label)
+                        for value, label in schedule_options
+                    ],
+                    multiple=True,
+                    mode=selector.SelectSelectorMode.DROPDOWN,
+                )
+            ),
+        }
+    )
+
+
 class RachioSupervisorConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
     """Handle a config flow for Rachio Supervisor."""
 
     VERSION = 1
     MINOR_VERSION = 1
+
+    def __init__(self) -> None:
+        self._basic_input: dict[str, Any] = {}
 
     async def async_step_user(self, user_input: dict[str, Any] | None = None):
         """Handle the initial step."""
@@ -94,20 +127,40 @@ class RachioSupervisorConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             return self.async_abort(reason="no_rachio_entries")
 
         if user_input is not None:
-            unique_id = user_input[CONF_RACHIO_CONFIG_ENTRY_ID].strip() or slugify(
-                user_input[CONF_SITE_NAME]
-            )
-            await self.async_set_unique_id(f"rachio_supervisor::{unique_id}")
-            self._abort_if_unique_id_configured()
-
-            return self.async_create_entry(
-                title=user_input[CONF_SITE_NAME],
-                data=user_input,
-            )
+            self._basic_input = dict(user_input)
+            return await self.async_step_policy()
 
         return self.async_show_form(
             step_id="user",
             data_schema=_flow_schema(options),
+        )
+
+    async def async_step_policy(self, user_input: dict[str, Any] | None = None):
+        """Handle per-schedule policy configuration."""
+        selected_entry_id = self._basic_input[CONF_RACHIO_CONFIG_ENTRY_ID]
+        schedule_options = schedule_entity_options(self.hass, selected_entry_id)
+
+        if user_input is not None:
+            final_input = {
+                **self._basic_input,
+                CONF_AUTO_CATCH_UP_SCHEDULES: user_input.get(
+                    CONF_AUTO_CATCH_UP_SCHEDULES,
+                    [],
+                ),
+            }
+            unique_id = final_input[CONF_RACHIO_CONFIG_ENTRY_ID].strip() or slugify(
+                final_input[CONF_SITE_NAME]
+            )
+            await self.async_set_unique_id(f"rachio_supervisor::{unique_id}")
+            self._abort_if_unique_id_configured()
+            return self.async_create_entry(
+                title=final_input[CONF_SITE_NAME],
+                data=final_input,
+            )
+
+        return self.async_show_form(
+            step_id="policy",
+            data_schema=_policy_schema(schedule_options),
         )
 
     @staticmethod
@@ -121,15 +174,43 @@ class RachioSupervisorOptionsFlow(config_entries.OptionsFlow):
 
     def __init__(self, config_entry: config_entries.ConfigEntry) -> None:
         self.config_entry = config_entry
+        self._basic_input: dict[str, Any] = {}
 
     async def async_step_init(self, user_input: dict[str, Any] | None = None):
         """Manage the integration options."""
         if user_input is not None:
-            return self.async_create_entry(title="", data=user_input)
+            self._basic_input = dict(user_input)
+            return await self.async_step_policy()
 
         defaults = {**self.config_entry.data, **self.config_entry.options}
         options = rachio_entry_options(self.hass)
         return self.async_show_form(
             step_id="init",
             data_schema=_flow_schema(options, defaults),
+        )
+
+    async def async_step_policy(self, user_input: dict[str, Any] | None = None):
+        """Manage schedule policy options."""
+        defaults = {**self.config_entry.data, **self.config_entry.options}
+        selected_entry_id = self._basic_input.get(
+            CONF_RACHIO_CONFIG_ENTRY_ID,
+            defaults.get(CONF_RACHIO_CONFIG_ENTRY_ID, ""),
+        )
+        schedule_options = schedule_entity_options(self.hass, selected_entry_id)
+
+        if user_input is not None:
+            return self.async_create_entry(
+                title="",
+                data={
+                    **self._basic_input,
+                    CONF_AUTO_CATCH_UP_SCHEDULES: user_input.get(
+                        CONF_AUTO_CATCH_UP_SCHEDULES,
+                        [],
+                    ),
+                },
+            )
+
+        return self.async_show_form(
+            step_id="policy",
+            data_schema=_policy_schema(schedule_options, defaults),
         )

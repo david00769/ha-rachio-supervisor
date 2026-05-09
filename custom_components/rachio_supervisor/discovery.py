@@ -12,6 +12,15 @@ from .const import RACHIO_DOMAIN
 
 
 @dataclass(frozen=True, slots=True)
+class ScheduleEntityRef:
+    """Linked schedule entity metadata from the built-in Rachio integration."""
+
+    entity_id: str
+    label: str
+    unique_id: str | None
+
+
+@dataclass(frozen=True, slots=True)
 class LinkedRachioEntities:
     """Grouped Rachio entities discovered from a linked config entry."""
 
@@ -21,6 +30,7 @@ class LinkedRachioEntities:
     standby_entity_id: str | None
     zone_switches: tuple[str, ...]
     schedule_switches: tuple[str, ...]
+    schedule_entities: tuple[ScheduleEntityRef, ...]
     all_entities: tuple[str, ...]
 
 
@@ -67,6 +77,7 @@ def discover_linked_entities(
     standby_entity_id = None
     zone_switches: list[str] = []
     schedule_switches: list[str] = []
+    schedule_entities: list[ScheduleEntityRef] = []
     all_entities: list[str] = []
 
     for entry in entries:
@@ -89,6 +100,13 @@ def discover_linked_entities(
                 unique_id = (entry.unique_id or "").lower()
                 if "schedule" in unique_id:
                     schedule_switches.append(entity_id)
+                    schedule_entities.append(
+                        ScheduleEntityRef(
+                            entity_id=entity_id,
+                            label=entry.original_name or entity_id,
+                            unique_id=entry.unique_id,
+                        )
+                    )
                 else:
                     zone_switches.append(entity_id)
 
@@ -99,5 +117,17 @@ def discover_linked_entities(
         standby_entity_id=standby_entity_id,
         zone_switches=tuple(sorted(zone_switches)),
         schedule_switches=tuple(sorted(schedule_switches)),
+        schedule_entities=tuple(
+            sorted(schedule_entities, key=lambda entity: entity.label.lower())
+        ),
         all_entities=tuple(sorted(all_entities)),
     )
+
+
+def schedule_entity_options(
+    hass: HomeAssistant,
+    rachio_config_entry_id: str,
+) -> list[tuple[str, str]]:
+    """Return discovered Rachio schedule entities as config-flow options."""
+    linked = discover_linked_entities(hass, rachio_config_entry_id)
+    return [(entity.entity_id, entity.label) for entity in linked.schedule_entities]

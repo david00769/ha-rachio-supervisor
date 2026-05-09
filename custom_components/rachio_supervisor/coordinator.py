@@ -16,6 +16,7 @@ from homeassistant.helpers.update_coordinator import DataUpdateCoordinator
 
 from .const import (
     CONF_ALLOW_MOISTURE_WRITE_BACK,
+    CONF_AUTO_CATCH_UP_SCHEDULES,
     CONF_CLOUDHOOK_URL,
     CONF_OBSERVE_FIRST,
     CONF_RACHIO_CONFIG_ENTRY_ID,
@@ -26,7 +27,7 @@ from .const import (
     DOMAIN,
     WEBHOOK_CONST_ID,
 )
-from .discovery import discover_linked_entities
+from .discovery import LinkedRachioEntities, ScheduleEntityRef, discover_linked_entities
 from .rachio_api import RachioClient, RachioClientError
 
 TZ = ZoneInfo("UTC")
@@ -46,6 +47,9 @@ class ScheduleSnapshot:
     status: str
     reason: str
     catch_up_candidate: str
+    policy_mode: str
+    policy_basis: str
+    schedule_entity_id: str | None
     last_run_at: str | None
     last_skip_at: str | None
     summary: str
@@ -195,6 +199,27 @@ def webhook_matches(
     return False
 
 
+def match_schedule_entity(
+    schedule_name: str,
+    linked_entities: LinkedRachioEntities,
+) -> ScheduleEntityRef | None:
+    """Match a Rachio API schedule to a discovered HA schedule entity."""
+    schedule_words = normalize_words(schedule_name)
+    candidates: list[tuple[int, int, ScheduleEntityRef]] = []
+    for entity in linked_entities.schedule_entities:
+        entity_words = normalize_words(entity.label)
+        overlap = len(schedule_words & entity_words)
+        exactish = int(schedule_words == entity_words and bool(schedule_words))
+        candidates.append((exactish, overlap, entity))
+    if not candidates:
+        return None
+    candidates.sort(key=lambda item: (item[0], item[1]), reverse=True)
+    best = candidates[0]
+    if best[0] == 0 and best[1] == 0:
+        return None
+    return best[2]
+
+
 def choose_controller(
     devices: list[dict[str, object]],
     expected_zone_count: int,
@@ -221,12 +246,14 @@ def choose_controller(
 
 def build_rachio_evidence(
     client: RachioClient,
+    linked_entities: LinkedRachioEntities,
     expected_zone_count: int,
     actual_rain_value: str,
     controller_available: bool,
     preferred_name: str,
     expected_webhook_id: str | None,
     expected_cloudhook_url: str | None,
+    auto_catch_up_schedule_entities: set[str],
 ) -> RachioEvidenceSnapshot:
     """Build a site-level evidence snapshot from the public Rachio API."""
     devices = client.list_person_devices()
@@ -302,6 +329,16 @@ def build_rachio_evidence(
             continue
         rule_id = str(rule["id"])
         name = str(rule.get("name", rule_id))
+        matched_schedule_entity = match_schedule_entity(name, linked_entities)
+        schedule_entity_id = (
+            matched_schedule_entity.entity_id if matched_schedule_entity else None
+        )
+        if schedule_entity_id and schedule_entity_id in auto_catch_up_schedule_entities:
+            policy_mode = "auto_catch_up_enabled"
+            policy_basis = "Configured automatic catch-up opt-in."
+        else:
+            policy_mode = "observe_only"
+            policy_basis = "Default observe-first schedule posture."
         run_event = completed_by_schedule.get(rule_id)
         skip_event = skipped_by_schedule.get(rule_id)
         observed_mm = threshold_mm = None
@@ -319,7 +356,10 @@ def build_rachio_evidence(
 
         if skip_event and actual_rain_numeric is not None and threshold_mm is not None:
             if controller_available and actual_rain_numeric < threshold_mm:
-                candidate = "candidate"
+                if policy_mode == "auto_catch_up_enabled":
+                    candidate = "eligible_auto"
+                else:
+                    candidate = "review_recommended"
             else:
                 candidate = "not_needed"
         elif skip_event:
@@ -334,6 +374,9 @@ def build_rachio_evidence(
                 status=status,
                 reason=reason,
                 catch_up_candidate=candidate,
+                policy_mode=policy_mode,
+                policy_basis=policy_basis,
+                schedule_entity_id=schedule_entity_id,
                 last_run_at=event_dt(run_event).isoformat() if run_event else None,
                 last_skip_at=event_dt(skip_event).isoformat() if skip_event else None,
                 summary=reason,
@@ -394,6 +437,11 @@ class RachioSupervisorCoordinator(DataUpdateCoordinator[SupervisorSnapshot]):
             self.hass,
             data.get(CONF_RACHIO_CONFIG_ENTRY_ID, ""),
         )
+        auto_catch_up_schedule_entities = {
+            entity_id
+            for entity_id in data.get(CONF_AUTO_CATCH_UP_SCHEDULES, [])
+            if isinstance(entity_id, str)
+        }
         notes: list[str] = []
 
         def state_value(entity_id: str | None) -> str:
@@ -479,12 +527,14 @@ class RachioSupervisorCoordinator(DataUpdateCoordinator[SupervisorSnapshot]):
                 evidence = await self.hass.async_add_executor_job(
                     build_rachio_evidence,
                     RachioClient(str(api_key)),
+                    linked_entities,
                     len(linked_entities.zone_switches),
                     actual_rain_value,
                     connectivity not in {"off", "missing", "unavailable"},
                     data.get(CONF_SITE_NAME, self.entry.title),
                     str(expected_webhook_id) if expected_webhook_id else None,
                     str(expected_cloudhook_url) if expected_cloudhook_url else None,
+                    auto_catch_up_schedule_entities,
                 )
             except RachioClientError as err:
                 notes.append(f"Rachio API evidence fetch failed: {err}")

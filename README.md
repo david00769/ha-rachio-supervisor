@@ -34,9 +34,13 @@ first real runtime milestones:
 - site-level sensors now expose webhook registration health using the linked HA
   Rachio webhook id/url plus the Home Assistant-managed
   `homeassistant.rachio:` webhook prefix
+- config flow and options now include a schedule-policy step so individual
+  discovered Rachio schedules can be opted into automatic catch-up while the
+  default posture stays observe-only
 - schedule-level sensors now expose:
   - status
   - reason
+  - policy
   - catch-up candidate
 
 The deeper irrigation logic is still pending:
@@ -104,11 +108,13 @@ Today the custom integration provides a narrow but real runtime:
 - schedule-level sensors for each active Rachio schedule:
   - status
   - reason
+  - policy
   - catch-up candidate
 
 This milestone is still intentionally narrow. It does not yet execute catch-up
-actions or moisture write-back, and its webhook reasoning currently stops at
-registration/match health rather than full event-freshness enforcement.
+actions or moisture write-back. The new policy surface defines which schedules
+would be eligible for later automatic catch-up, but it does not yet trigger
+watering on its own.
 
 ## HACS status
 

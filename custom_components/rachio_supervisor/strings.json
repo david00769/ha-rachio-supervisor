@@ -13,6 +13,13 @@
           "observe_first": "Start in observe-first mode",
           "allow_moisture_write_back": "Allow moisture write-back mode"
         }
+      },
+      "policy": {
+        "title": "Schedule policy",
+        "description": "Choose which discovered Rachio schedules are allowed automatic catch-up. All others stay observe-only.",
+        "data": {
+          "auto_catch_up_schedule_entities": "Automatic catch-up schedules"
+        }
       }
     }
   },
@@ -27,6 +34,13 @@
           "zone_count": "Zone count",
           "observe_first": "Start in observe-first mode",
           "allow_moisture_write_back": "Allow moisture write-back mode"
+        }
+      },
+      "policy": {
+        "title": "Schedule policy",
+        "description": "Choose which discovered Rachio schedules are allowed automatic catch-up. All others stay observe-only.",
+        "data": {
+          "auto_catch_up_schedule_entities": "Automatic catch-up schedules"
         }
       }
     }
