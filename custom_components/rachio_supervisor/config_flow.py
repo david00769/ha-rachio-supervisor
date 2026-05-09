@@ -49,97 +49,102 @@ def _flow_schema(
 ) -> vol.Schema:
     """Build the shared config form schema."""
     defaults = defaults or {}
-    return vol.Schema(
-        {
-            vol.Required(
-                CONF_SITE_NAME,
-                default=defaults.get(CONF_SITE_NAME, "Rachio Site"),
-            ): selector.TextSelector(
-                selector.TextSelectorConfig(type=selector.TextSelectorType.TEXT)
-            ),
-            vol.Required(
+    schema: dict[Any, Any] = {
+        vol.Required(
+            CONF_SITE_NAME,
+            default=defaults.get(CONF_SITE_NAME, "Rachio Site"),
+        ): selector.TextSelector(
+            selector.TextSelectorConfig(type=selector.TextSelectorType.TEXT)
+        ),
+        vol.Required(
+            CONF_RACHIO_CONFIG_ENTRY_ID,
+            default=defaults.get(
                 CONF_RACHIO_CONFIG_ENTRY_ID,
-                default=defaults.get(
-                    CONF_RACHIO_CONFIG_ENTRY_ID,
-                    rachio_options[0][0] if rachio_options else "",
-                ),
-            ): selector.SelectSelector(
-                selector.SelectSelectorConfig(
-                    options=[
-                        selector.SelectOptionDict(value=value, label=label)
-                        for value, label in rachio_options
-                    ],
-                    mode=selector.SelectSelectorMode.DROPDOWN,
-                )
+                rachio_options[0][0] if rachio_options else "",
             ),
-            vol.Optional(
-                CONF_RAIN_ACTUALS_ENTITY,
-                default=defaults.get(CONF_RAIN_ACTUALS_ENTITY, ""),
-            ): selector.EntitySelector(
-                selector.EntitySelectorConfig(domain="sensor", multiple=False)
-            ),
-            vol.Required(
-                CONF_ZONE_COUNT,
-                default=defaults.get(CONF_ZONE_COUNT, DEFAULT_ZONE_COUNT),
-            ): selector.NumberSelector(
-                selector.NumberSelectorConfig(min=1, max=32, step=1, mode=selector.NumberSelectorMode.BOX)
-            ),
-            vol.Required(
-                CONF_OBSERVE_FIRST,
-                default=defaults.get(CONF_OBSERVE_FIRST, DEFAULT_OBSERVE_FIRST),
-            ): selector.BooleanSelector(),
-            vol.Required(
+        ): selector.SelectSelector(
+            selector.SelectSelectorConfig(
+                options=[
+                    selector.SelectOptionDict(value=value, label=label)
+                    for value, label in rachio_options
+                ],
+                mode=selector.SelectSelectorMode.DROPDOWN,
+            )
+        ),
+        vol.Required(
+            CONF_ZONE_COUNT,
+            default=defaults.get(CONF_ZONE_COUNT, DEFAULT_ZONE_COUNT),
+        ): selector.NumberSelector(
+            selector.NumberSelectorConfig(min=1, max=32, step=1, mode=selector.NumberSelectorMode.BOX)
+        ),
+        vol.Required(
+            CONF_OBSERVE_FIRST,
+            default=defaults.get(CONF_OBSERVE_FIRST, DEFAULT_OBSERVE_FIRST),
+        ): selector.BooleanSelector(),
+        vol.Required(
+            CONF_ALLOW_MOISTURE_WRITE_BACK,
+            default=defaults.get(
                 CONF_ALLOW_MOISTURE_WRITE_BACK,
-                default=defaults.get(
-                    CONF_ALLOW_MOISTURE_WRITE_BACK,
-                    DEFAULT_ALLOW_MOISTURE_WRITE_BACK,
-                ),
-            ): selector.BooleanSelector(),
-            vol.Required(
+                DEFAULT_ALLOW_MOISTURE_WRITE_BACK,
+            ),
+        ): selector.BooleanSelector(),
+        vol.Required(
+            CONF_ENABLE_PERSISTENT_NOTIFICATIONS,
+            default=defaults.get(
                 CONF_ENABLE_PERSISTENT_NOTIFICATIONS,
-                default=defaults.get(
-                    CONF_ENABLE_PERSISTENT_NOTIFICATIONS,
-                    DEFAULT_ENABLE_PERSISTENT_NOTIFICATIONS,
-                ),
-            ): selector.BooleanSelector(),
-            vol.Required(
+                DEFAULT_ENABLE_PERSISTENT_NOTIFICATIONS,
+            ),
+        ): selector.BooleanSelector(),
+        vol.Required(
+            CONF_SAFE_WINDOW_END_HOUR,
+            default=defaults.get(
                 CONF_SAFE_WINDOW_END_HOUR,
-                default=defaults.get(
-                    CONF_SAFE_WINDOW_END_HOUR,
-                    DEFAULT_SAFE_WINDOW_END_HOUR,
-                ),
-            ): selector.NumberSelector(
-                selector.NumberSelectorConfig(min=0, max=23, step=1, mode=selector.NumberSelectorMode.BOX)
+                DEFAULT_SAFE_WINDOW_END_HOUR,
             ),
-            vol.Required(
+        ): selector.NumberSelector(
+            selector.NumberSelectorConfig(min=0, max=23, step=1, mode=selector.NumberSelectorMode.BOX)
+        ),
+        vol.Required(
+            CONF_HEALTH_RECONCILE_HOUR,
+            default=defaults.get(
                 CONF_HEALTH_RECONCILE_HOUR,
-                default=defaults.get(
-                    CONF_HEALTH_RECONCILE_HOUR,
-                    DEFAULT_HEALTH_RECONCILE_HOUR,
-                ),
-            ): selector.NumberSelector(
-                selector.NumberSelectorConfig(min=0, max=23, step=1, mode=selector.NumberSelectorMode.BOX)
+                DEFAULT_HEALTH_RECONCILE_HOUR,
             ),
-            vol.Required(
+        ): selector.NumberSelector(
+            selector.NumberSelectorConfig(min=0, max=23, step=1, mode=selector.NumberSelectorMode.BOX)
+        ),
+        vol.Required(
+            CONF_HEALTH_RECONCILE_MINUTE,
+            default=defaults.get(
                 CONF_HEALTH_RECONCILE_MINUTE,
-                default=defaults.get(
-                    CONF_HEALTH_RECONCILE_MINUTE,
-                    DEFAULT_HEALTH_RECONCILE_MINUTE,
-                ),
-            ): selector.NumberSelector(
-                selector.NumberSelectorConfig(min=0, max=59, step=1, mode=selector.NumberSelectorMode.BOX)
+                DEFAULT_HEALTH_RECONCILE_MINUTE,
             ),
-            vol.Optional(
+        ): selector.NumberSelector(
+            selector.NumberSelectorConfig(min=0, max=59, step=1, mode=selector.NumberSelectorMode.BOX)
+        ),
+        vol.Optional(
+            CONF_MOISTURE_SENSOR_ENTITIES,
+            default=defaults.get(
                 CONF_MOISTURE_SENSOR_ENTITIES,
-                default=defaults.get(
-                    CONF_MOISTURE_SENSOR_ENTITIES,
-                    DEFAULT_MOISTURE_SENSOR_ENTITIES,
-                ),
-            ): selector.EntitySelector(
-                selector.EntitySelectorConfig(domain="sensor", multiple=True)
+                DEFAULT_MOISTURE_SENSOR_ENTITIES,
             ),
-        }
+        ): selector.EntitySelector(
+            selector.EntitySelectorConfig(domain="sensor", multiple=True)
+        ),
+    }
+
+    rain_default = defaults.get(CONF_RAIN_ACTUALS_ENTITY)
+    rain_marker: Any = vol.Optional(CONF_RAIN_ACTUALS_ENTITY)
+    if rain_default not in (None, ""):
+        rain_marker = vol.Optional(
+            CONF_RAIN_ACTUALS_ENTITY,
+            default=rain_default,
+        )
+    schema[rain_marker] = selector.EntitySelector(
+        selector.EntitySelectorConfig(domain="sensor", multiple=False)
     )
+
+    return vol.Schema(schema)
 
 
 def _policy_schema(
