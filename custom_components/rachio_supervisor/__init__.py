@@ -16,6 +16,7 @@ from .const import (
     CONF_ALLOW_MOISTURE_WRITE_BACK,
     DOMAIN,
     SERVICE_ACKNOWLEDGE_RECOMMENDATION,
+    SERVICE_CLEAR_FLOW_ALERT_REVIEW,
     SERVICE_CLEAR_RECOMMENDATION_ACKNOWLEDGEMENT,
     SERVICE_EVALUATE_NOW,
     SERVICE_WRITE_MOISTURE_NOW,
@@ -220,6 +221,35 @@ async def _async_handle_clear_recommendation_acknowledgement(
     )
 
 
+async def _async_handle_clear_flow_alert_review(
+    hass: HomeAssistant,
+    call: ServiceCall,
+) -> None:
+    """Clear current Supervisor-side flow alert review state."""
+    coordinators = hass.data.get(DOMAIN, {})
+    if not coordinators:
+        raise HomeAssistantError("No Rachio Supervisor entries are loaded.")
+
+    site_name = call.data.get("site_name")
+    rule_id = str(call.data["rule_id"]) if call.data.get("rule_id") else None
+    matched = [
+        coordinator
+        for coordinator in coordinators.values()
+        if not site_name or coordinator.data.site_name == site_name
+    ]
+    if not matched:
+        raise HomeAssistantError("No matching Rachio Supervisor site was found.")
+    if len(matched) > 1 and not site_name:
+        raise HomeAssistantError("Multiple sites are loaded. Provide site_name.")
+
+    for coordinator in matched:
+        try:
+            coordinator.clear_flow_alert_review(rule_id=rule_id)
+        except ValueError as exc:
+            raise HomeAssistantError(str(exc)) from exc
+        await coordinator.async_request_refresh()
+
+
 @callback
 def _async_register_services(hass: HomeAssistant) -> Callable[[], None]:
     """Register domain services once."""
@@ -231,6 +261,9 @@ def _async_register_services(hass: HomeAssistant) -> Callable[[], None]:
 
     async def _handle_clear_ack(call: ServiceCall) -> None:
         await _async_handle_clear_recommendation_acknowledgement(hass, call)
+
+    async def _handle_clear_flow_alert_review(call: ServiceCall) -> None:
+        await _async_handle_clear_flow_alert_review(hass, call)
 
     hass.services.async_register(
         DOMAIN,
@@ -274,6 +307,17 @@ def _async_register_services(hass: HomeAssistant) -> Callable[[], None]:
             }
         ),
     )
+    hass.services.async_register(
+        DOMAIN,
+        SERVICE_CLEAR_FLOW_ALERT_REVIEW,
+        _handle_clear_flow_alert_review,
+        schema=vol.Schema(
+            {
+                vol.Optional("rule_id"): cv.string,
+                vol.Optional("site_name"): cv.string,
+            }
+        ),
+    )
 
     def _remove() -> None:
         hass.services.async_remove(DOMAIN, SERVICE_EVALUATE_NOW)
@@ -282,6 +326,7 @@ def _async_register_services(hass: HomeAssistant) -> Callable[[], None]:
         hass.services.async_remove(
             DOMAIN, SERVICE_CLEAR_RECOMMENDATION_ACKNOWLEDGEMENT
         )
+        hass.services.async_remove(DOMAIN, SERVICE_CLEAR_FLOW_ALERT_REVIEW)
 
     return _remove
 

@@ -109,8 +109,14 @@
       "last_run": {
         "name": "Last run"
       },
+      "last_run_event": {
+        "name": "Last run event"
+      },
       "last_skip": {
         "name": "Last skip"
+      },
+      "last_skip_decision": {
+        "name": "Last skip decision"
       },
       "active_zone_count": {
         "name": "Active zones"
@@ -156,6 +162,15 @@
       },
       "last_catch_up_decision": {
         "name": "Last catch-up decision"
+      },
+      "active_flow_alert_count": {
+        "name": "Active flow alerts"
+      },
+      "flow_alert_queue": {
+        "name": "Flow alert queue"
+      },
+      "last_flow_alert_decision": {
+        "name": "Last flow alert decision"
       }
     }
   }

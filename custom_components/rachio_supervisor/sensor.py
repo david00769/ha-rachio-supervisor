@@ -87,8 +87,18 @@ DESCRIPTIONS = (
         value_fn=lambda data: data.last_run_summary,
     ),
     RachioSupervisorSensorDescription(
+        key="last_run_event",
+        translation_key="last_run_event",
+        value_fn=lambda data: data.last_run_summary,
+    ),
+    RachioSupervisorSensorDescription(
         key="last_skip",
         translation_key="last_skip",
+        value_fn=lambda data: data.last_skip_summary,
+    ),
+    RachioSupervisorSensorDescription(
+        key="last_skip_decision",
+        translation_key="last_skip_decision",
         value_fn=lambda data: data.last_skip_summary,
     ),
     RachioSupervisorSensorDescription(
@@ -178,6 +188,24 @@ DESCRIPTIONS = (
         translation_key="last_catch_up_decision",
         entity_category=EntityCategory.DIAGNOSTIC,
         value_fn=lambda data: data.last_catch_up_decision,
+    ),
+    RachioSupervisorSensorDescription(
+        key="active_flow_alert_count",
+        translation_key="active_flow_alert_count",
+        entity_category=EntityCategory.DIAGNOSTIC,
+        value_fn=lambda data: str(data.active_flow_alert_count),
+    ),
+    RachioSupervisorSensorDescription(
+        key="flow_alert_queue",
+        translation_key="flow_alert_queue",
+        entity_category=EntityCategory.DIAGNOSTIC,
+        value_fn=lambda data: data.flow_alert_queue,
+    ),
+    RachioSupervisorSensorDescription(
+        key="last_flow_alert_decision",
+        translation_key="last_flow_alert_decision",
+        entity_category=EntityCategory.DIAGNOSTIC,
+        value_fn=lambda data: data.last_flow_alert_decision,
     ),
 )
 
@@ -279,12 +307,12 @@ class RachioSupervisorSensor(RachioSupervisorEntity, SensorEntity):
                 "last_event_at": data.last_event_at,
                 "controller_name": data.controller_name,
             }
-        if self.entity_description.key == "last_run":
+        if self.entity_description.key in {"last_run", "last_run_event"}:
             return {
                 "last_run_at": data.last_run_at,
                 "controller_name": data.controller_name,
             }
-        if self.entity_description.key == "last_skip":
+        if self.entity_description.key in {"last_skip", "last_skip_decision"}:
             return {
                 "last_skip_at": data.last_skip_at,
                 "controller_name": data.controller_name,
@@ -361,6 +389,39 @@ class RachioSupervisorSensor(RachioSupervisorEntity, SensorEntity):
                 "runtime_minutes": data.catch_up_runtime_minutes,
                 "summary": data.catch_up_summary,
                 "decision_at": data.catch_up_decision_at,
+            }
+        if self.entity_description.key in {
+            "active_flow_alert_count",
+            "flow_alert_queue",
+            "last_flow_alert_decision",
+        }:
+            alerts = []
+            if self.coordinator._cached_evidence is not None:
+                alerts = [
+                    {
+                        "rule_id": alert.rule_id,
+                        "zone_name": alert.zone_name,
+                        "alert_kind": alert.alert_kind,
+                        "alert_at": alert.alert_at,
+                        "status": alert.status,
+                        "reason": alert.reason,
+                        "recommended_action": alert.recommended_action,
+                        "baseline_before_lpm": alert.baseline_before_lpm,
+                        "baseline_after_lpm": alert.baseline_after_lpm,
+                        "baseline_delta_percent": alert.baseline_delta_percent,
+                        "calibration_at": alert.calibration_at,
+                        "review_state": alert.review_state,
+                        "summary": alert.summary,
+                    }
+                    for alert in self.coordinator._cached_evidence.flow_alert_snapshots
+                ]
+            return {
+                "active_flow_alert_count": data.active_flow_alert_count,
+                "flow_alert_queue": data.flow_alert_queue,
+                "last_flow_alert_decision": data.last_flow_alert_decision,
+                "flow_alerts": alerts,
+                "normal_tolerance_percent": 15,
+                "native_calibration_api_available": False,
             }
         return None
 

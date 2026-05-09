@@ -217,6 +217,9 @@ Planned first-class entities:
 - last run
 - last skip
 - last reconciliation
+- active flow alerts
+- flow alert review queue
+- last flow alert decision
 - per-zone status
 - per-zone reason/explanation
 - per-zone moisture band
@@ -231,6 +234,7 @@ Planned first-class services:
 - write moisture now
 - acknowledge recommendation
 - dismiss recommendation
+- clear flow alert review after a normal post-alert calibration
 - pause zone policy
 
 ### Diagnostics
@@ -240,9 +244,54 @@ Planned diagnostics surface:
 - mapped Rachio inputs
 - mapped moisture inputs
 - mapped rain inputs
+- flow alert review queue and post-calibration baseline comparison
 - policy mode per zone
 - latest supervisor evidence snapshot
 - stale webhook/API warnings
+
+### Flow alert supervision
+
+Flow alert handling is a first-class supervision workflow, not a generic note.
+
+The product must treat low-flow and high-flow alerts conservatively because
+operators may see vendor alerts that are not actually actionable faults.
+
+Required v1 lifecycle:
+
+1. detect recent low-flow / high-flow alert events from Rachio history
+2. require a later native Rachio calibration event for the affected zone before
+   any clear is possible
+3. compare the post-alert baseline against the most recent pre-alert baseline
+   when both are available
+4. only mark the alert as eligible to clear when the post-alert baseline is
+   within the configured stable-baseline tolerance
+5. keep the alert in review when:
+   - calibration has not happened yet
+   - no earlier comparable baseline exists
+   - the new baseline moved materially from the prior baseline
+
+Important boundary:
+
+- the product may clear the **Supervisor review item**
+- it does not claim to clear the native vendor alert in Rachio unless the public
+  API supports that in the future
+- zone association and baseline association may need to be inferred from Rachio
+  event text, so the product should prefer false-negative review retention over
+  false-positive auto-clear
+
+Required statuses:
+
+- `calibration_required`
+- `calibrated_needs_review`
+- `normal_after_calibration`
+- `problem_suspected`
+
+Required actions:
+
+- `run_native_calibration`
+- `review_baseline`
+- `clear_review`
+- `inspect_zone`
 
 ## UX Direction
 
@@ -397,4 +446,3 @@ The first real functional milestone should add:
 - richer zone policy editing
 - possible future Home Assistant Core path once the product proves stable and
   generally useful
-

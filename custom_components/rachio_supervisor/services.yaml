@@ -79,3 +79,20 @@ clear_recommendation_acknowledgement:
       required: false
       selector:
         text:
+
+clear_flow_alert_review:
+  name: Clear flow alert review
+  description: Clear Supervisor-side flow alert review only after a post-alert calibration returns a stable baseline close to the prior baseline.
+  fields:
+    rule_id:
+      name: Rule id
+      description: Optional flow alert rule_id from the flow alert sensor attributes. If omitted, all currently eligible normal-after-calibration items for the site are cleared.
+      required: false
+      selector:
+        text:
+    site_name:
+      name: Site name
+      description: Optional site label to disambiguate duplicate loaded Rachio Supervisor entries.
+      required: false
+      selector:
+        text:

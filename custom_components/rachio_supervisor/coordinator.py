@@ -53,6 +53,16 @@ WORD_RE = re.compile(r"[a-z0-9]+")
 
 RAIN_MM_RE = re.compile(r"observed ([0-9.]+) mm(?: and predicted ([0-9.]+) mm)?")
 THRESHOLD_MM_RE = re.compile(r"threshold of ([0-9.]+) mm")
+FLOW_ALERT_RE = re.compile(r"\b(?P<kind>low|high)[ -]?flow\b", re.IGNORECASE)
+FLOW_BASELINE_RE = re.compile(
+    r"baseline flow rate for (?P<zone>.+?) is now set at (?P<flow>[0-9.]+)\s*lpm",
+    re.IGNORECASE,
+)
+FLOW_ALERT_ZONE_RE = re.compile(
+    r"(?:low|high)[ -]?flow(?:[^A-Za-z0-9]+(?:in|for|on))? (?P<zone>.+?)(?: at |\.|$)",
+    re.IGNORECASE,
+)
+FLOW_STABLE_TOLERANCE_RATIO = 0.15
 DRY_THRESHOLD = 25.0
 WET_THRESHOLD = 60.0
 
@@ -105,7 +115,28 @@ class RachioEvidenceSnapshot:
     webhook_health: str
     webhook_url: str | None
     webhook_external_id: str | None
+    flow_alert_snapshots: tuple["FlowAlertSnapshot", ...]
     schedule_snapshots: tuple[ScheduleSnapshot, ...]
+
+
+@dataclass(slots=True)
+class FlowAlertSnapshot:
+    """Flow-alert review status derived from Rachio event history."""
+
+    rule_id: str
+    zone_name: str
+    alert_kind: str
+    alert_at: str
+    alert_summary: str
+    status: str
+    reason: str
+    recommended_action: str
+    baseline_before_lpm: float | None
+    baseline_after_lpm: float | None
+    baseline_delta_percent: float | None
+    calibration_at: str | None
+    review_state: str
+    summary: str
 
 
 @dataclass(slots=True)
@@ -163,6 +194,9 @@ class SupervisorSnapshot:
     catch_up_summary: str
     catch_up_decision_at: str | None
     last_catch_up_decision: str
+    active_flow_alert_count: int
+    flow_alert_queue: str
+    last_flow_alert_decision: str
     last_reconciliation: str | None
     last_moisture_write_status: str
     last_moisture_write_at: str | None
@@ -310,6 +344,171 @@ def format_event_state(event: dict[str, object] | None) -> str:
 def normalize_words(value: str) -> set[str]:
     """Normalize a string into lowercase word tokens."""
     return set(WORD_RE.findall(value.lower()))
+
+
+def flow_alert_kind(summary: str) -> str | None:
+    """Return low_flow/high_flow when an event summary describes a flow alert."""
+    match = FLOW_ALERT_RE.search(summary)
+    if not match:
+        return None
+    return f"{match.group('kind').lower()}_flow"
+
+
+def flow_alert_zone_name(summary: str) -> str | None:
+    """Parse a best-effort zone label from a flow-alert summary."""
+    match = FLOW_ALERT_ZONE_RE.search(summary)
+    if not match:
+        return None
+    zone_name = match.group("zone").strip(" .")
+    return zone_name or None
+
+
+def baseline_event(event: dict[str, object]) -> tuple[str, float] | None:
+    """Parse a native Rachio flow-calibration baseline event."""
+    match = FLOW_BASELINE_RE.search(str(event.get("summary", "")))
+    if not match:
+        return None
+    return match.group("zone").strip(), float(match.group("flow"))
+
+
+def event_matches_zone(event: dict[str, object], zone_name: str) -> bool:
+    """Return whether event text appears to reference a zone by word overlap."""
+    summary_words = normalize_words(str(event.get("summary", "")))
+    zone_words = normalize_words(zone_name)
+    if not summary_words or not zone_words:
+        return False
+    return len(summary_words & zone_words) >= min(2, len(zone_words))
+
+
+def baseline_matches_zone(event: dict[str, object], zone_name: str) -> bool:
+    """Return whether a parsed baseline event appears to belong to a zone."""
+    parsed = baseline_event(event)
+    if parsed is None:
+        return False
+    parsed_zone, _parsed_flow = parsed
+    return event_matches_zone({"summary": parsed_zone}, zone_name)
+
+
+def build_flow_alert_snapshots(
+    events: list[dict[str, object]],
+    controller: dict[str, object],
+    acknowledged_flow_alert_ids: set[str],
+) -> tuple[FlowAlertSnapshot, ...]:
+    """Build review state for recent Rachio flow alerts."""
+    zones = [
+        zone
+        for zone in controller.get("zones", [])
+        if zone.get("enabled", True) and zone.get("id") and zone.get("name")
+    ]
+    flow_alerts: list[dict[str, object]] = []
+    for event in events:
+        summary = str(event.get("summary", ""))
+        kind = flow_alert_kind(summary)
+        if kind:
+            candidate = dict(event)
+            candidate["flow_alert_kind"] = kind
+            flow_alerts.append(candidate)
+    flow_alerts.sort(key=lambda event: int(event["eventDate"]), reverse=True)
+
+    snapshots: list[FlowAlertSnapshot] = []
+    seen: set[tuple[str, str]] = set()
+    for event in flow_alerts:
+        alert_summary = str(event.get("summary", ""))
+        kind = str(event["flow_alert_kind"])
+        matched_zone = next(
+            (zone for zone in zones if event_matches_zone(event, str(zone.get("name", "")))),
+            None,
+        )
+        zone_id = str(matched_zone.get("id")) if matched_zone else "unknown"
+        zone_name = (
+            str(matched_zone.get("name"))
+            if matched_zone
+            else flow_alert_zone_name(alert_summary) or "Unknown zone"
+        )
+        key = (zone_id, kind)
+        if key in seen:
+            continue
+        seen.add(key)
+
+        alert_time = event_dt(event)
+        baseline_events = [
+            baseline
+            for baseline in events
+            if baseline_event(baseline) is not None
+            and event_dt(baseline) > alert_time
+            and baseline_matches_zone(baseline, zone_name)
+        ]
+        baseline_events.sort(key=lambda baseline: int(baseline["eventDate"]))
+
+        baseline_before = None
+        previous_baselines = [
+            baseline
+            for baseline in events
+            if baseline_event(baseline) is not None
+            and event_dt(baseline) < alert_time
+            and baseline_matches_zone(baseline, zone_name)
+        ]
+        previous_baselines.sort(key=lambda baseline: int(baseline["eventDate"]), reverse=True)
+        if previous_baselines:
+            parsed = baseline_event(previous_baselines[0])
+            baseline_before = parsed[1] if parsed else None
+
+        baseline_after = None
+        calibration_at = None
+        if baseline_events:
+            parsed = baseline_event(baseline_events[-1])
+            if parsed:
+                baseline_after = parsed[1]
+                calibration_at = event_dt(baseline_events[-1]).isoformat()
+
+        delta_percent = None
+        if baseline_before and baseline_after is not None:
+            delta_percent = ((baseline_after - baseline_before) / baseline_before) * 100
+
+        rule_id = f"flow|{zone_id}|{kind}|{int(event['eventDate'])}"
+        if baseline_after is None:
+            status = "calibration_required"
+            reason = "A flow alert was seen and no later calibration baseline was found in the inspection window."
+            recommended_action = "run_native_calibration"
+        elif baseline_before is None:
+            status = "calibrated_needs_review"
+            reason = "A later calibration exists, but no earlier baseline was available for comparison."
+            recommended_action = "review_baseline"
+        elif abs((baseline_after - baseline_before) / baseline_before) <= FLOW_STABLE_TOLERANCE_RATIO:
+            status = "normal_after_calibration"
+            reason = "Post-alert calibration is within the stable-baseline tolerance."
+            recommended_action = "clear_review"
+        else:
+            status = "problem_suspected"
+            reason = "Post-alert calibration moved materially from the prior baseline."
+            recommended_action = "inspect_zone"
+
+        review_state = (
+            "cleared" if rule_id in acknowledged_flow_alert_ids else "pending_review"
+        )
+        snapshots.append(
+            FlowAlertSnapshot(
+                rule_id=rule_id,
+                zone_name=zone_name,
+                alert_kind=kind,
+                alert_at=alert_time.isoformat(),
+                alert_summary=alert_summary,
+                status=status,
+                reason=reason,
+                recommended_action=recommended_action,
+                baseline_before_lpm=baseline_before,
+                baseline_after_lpm=baseline_after,
+                baseline_delta_percent=delta_percent,
+                calibration_at=calibration_at,
+                review_state=review_state,
+                summary=(
+                    f"{zone_name}: {kind.replace('_', ' ')} alert -> {status}"
+                    if zone_name != "Unknown zone"
+                    else f"{kind.replace('_', ' ')} alert -> {status}"
+                ),
+            )
+        )
+    return tuple(snapshots)
 
 
 def webhook_matches(
@@ -697,6 +896,7 @@ def build_rachio_evidence(
     expected_cloudhook_url: str | None,
     auto_catch_up_schedule_entities: set[str],
     auto_missed_run_schedule_entities: set[str],
+    acknowledged_flow_alert_ids: set[str],
 ) -> RachioEvidenceSnapshot:
     """Build a site-level evidence snapshot from the public Rachio API."""
     devices = client.list_person_devices()
@@ -871,6 +1071,11 @@ def build_rachio_evidence(
         webhook_external_id=str(matching_webhook.get("externalId", ""))
         if matching_webhook
         else None,
+        flow_alert_snapshots=build_flow_alert_snapshots(
+            events,
+            controller,
+            acknowledged_flow_alert_ids,
+        ),
         schedule_snapshots=tuple(schedule_snapshots),
     )
 
@@ -892,6 +1097,7 @@ class RachioSupervisorCoordinator(DataUpdateCoordinator[SupervisorSnapshot]):
         self._last_moisture_write_schedule: str | None = None
         self._last_moisture_write_value: str | None = None
         self._acknowledged_recommendation_ids: set[str] = set()
+        self._acknowledged_flow_alert_ids: set[str] = set()
         self._mode = "healthy"
         self._degraded_since: str | None = None
         self._healthy_reconciles = 0
@@ -937,6 +1143,40 @@ class RachioSupervisorCoordinator(DataUpdateCoordinator[SupervisorSnapshot]):
             self._acknowledged_recommendation_ids.add(rule_id)
         else:
             self._acknowledged_recommendation_ids.discard(rule_id)
+
+    def clear_flow_alert_review(self, rule_id: str | None = None) -> None:
+        """Clear one flow-alert review item, or all eligible current items.
+
+        Only alerts that have a verified post-alert calibration within the
+        stable-baseline tolerance may be cleared from the Supervisor review
+        queue. Alerts that still require calibration, lack a comparable prior
+        baseline, or show a material baseline change must remain active.
+        """
+        snapshots = (
+            self._cached_evidence.flow_alert_snapshots if self._cached_evidence else ()
+        )
+        if rule_id:
+            snapshot = next(
+                (snapshot for snapshot in snapshots if snapshot.rule_id == rule_id),
+                None,
+            )
+            if snapshot is None:
+                raise ValueError("The requested flow alert review item was not found.")
+            if snapshot.status != "normal_after_calibration":
+                raise ValueError(
+                    "Flow alert review can only be cleared after a normal post-alert calibration comparison."
+                )
+            self._acknowledged_flow_alert_ids.add(rule_id)
+            return
+        cleared_any = False
+        for snapshot in snapshots:
+            if snapshot.status == "normal_after_calibration":
+                self._acknowledged_flow_alert_ids.add(snapshot.rule_id)
+                cleared_any = True
+        if not cleared_any and snapshots:
+            raise ValueError(
+                "No flow alert review items are currently eligible for clear. A normal post-alert calibration comparison is required first."
+            )
 
     def _should_reconcile(self, current: datetime) -> bool:
         """Return whether a full Rachio reconcile should run right now."""
@@ -1141,6 +1381,7 @@ class RachioSupervisorCoordinator(DataUpdateCoordinator[SupervisorSnapshot]):
         webhook_health = "unknown"
         webhook_url = None
         webhook_external_id = None
+        flow_alert_snapshots: tuple[FlowAlertSnapshot, ...] = ()
         schedule_snapshots: tuple[ScheduleSnapshot, ...] = ()
 
         api_key = linked_entry.data.get(CONF_API_KEY) if linked_entry else None
@@ -1166,6 +1407,7 @@ class RachioSupervisorCoordinator(DataUpdateCoordinator[SupervisorSnapshot]):
                     str(expected_cloudhook_url) if expected_cloudhook_url else None,
                     auto_catch_up_schedule_entities,
                     auto_missed_run_schedule_entities,
+                    self._acknowledged_flow_alert_ids,
                 )
             except RachioClientError as err:
                 notes.append(f"Rachio API evidence fetch failed: {err}")
@@ -1230,6 +1472,7 @@ class RachioSupervisorCoordinator(DataUpdateCoordinator[SupervisorSnapshot]):
             webhook_count = evidence.webhook_count
             webhook_url = evidence.webhook_url
             webhook_external_id = evidence.webhook_external_id
+            flow_alert_snapshots = evidence.flow_alert_snapshots
             if webhook_health == "unknown":
                 webhook_health = (
                     "healthy"
@@ -1305,6 +1548,31 @@ class RachioSupervisorCoordinator(DataUpdateCoordinator[SupervisorSnapshot]):
                     )
                     self._last_notified_decision_key = decision_key
 
+            active_flow_alerts = [
+                alert
+                for alert in flow_alert_snapshots
+                if alert.review_state == "pending_review"
+            ]
+            if notifications_enabled and active_flow_alerts:
+                alert = active_flow_alerts[0]
+                await self._async_update_notification(
+                    notification_id=f"{DOMAIN}_{self.entry.entry_id}_flow_alert",
+                    title="Rachio Supervisor flow alert",
+                    message=(
+                        f"{alert.zone_name}: {alert.alert_kind.replace('_', ' ')}.\n\n"
+                        f"Status: {alert.status}\n"
+                        f"Action: {alert.recommended_action}\n"
+                        f"Evidence: {alert.reason}"
+                    ),
+                )
+            elif notifications_enabled:
+                await self._async_update_notification(
+                    notification_id=f"{DOMAIN}_{self.entry.entry_id}_flow_alert",
+                    title="Rachio Supervisor flow alert",
+                    message="Flow alert review cleared.",
+                    dismiss_when=True,
+                )
+
         ready_moisture_writes = [
             schedule
             for schedule in schedule_snapshots
@@ -1376,6 +1644,28 @@ class RachioSupervisorCoordinator(DataUpdateCoordinator[SupervisorSnapshot]):
             if catch_up_decision_at
             else "none"
         )
+        active_flow_alerts = [
+            alert
+            for alert in flow_alert_snapshots
+            if alert.review_state == "pending_review"
+        ]
+        active_flow_alert_count = len(active_flow_alerts)
+        flow_alert_queue = (
+            ", ".join(alert.zone_name for alert in active_flow_alerts[:5])
+            if active_flow_alerts
+            else "none"
+        )
+        latest_flow_alert = flow_alert_snapshots[0] if flow_alert_snapshots else None
+        last_flow_alert_decision = (
+            (
+                f"{latest_flow_alert.alert_at[:16].replace('T', ' ')}|"
+                f"{latest_flow_alert.alert_kind}|"
+                f"{latest_flow_alert.zone_name}|"
+                f"{latest_flow_alert.status}"
+            )[:255]
+            if latest_flow_alert
+            else "none"
+        )
 
         return SupervisorSnapshot(
             health=health,
@@ -1429,6 +1719,9 @@ class RachioSupervisorCoordinator(DataUpdateCoordinator[SupervisorSnapshot]):
             catch_up_summary=catch_up_summary,
             catch_up_decision_at=catch_up_decision_at,
             last_catch_up_decision=last_catch_up_decision,
+            active_flow_alert_count=active_flow_alert_count,
+            flow_alert_queue=flow_alert_queue,
+            last_flow_alert_decision=last_flow_alert_decision,
             last_reconciliation=self._last_reconciliation,
             last_moisture_write_status=self._last_moisture_write_status,
             last_moisture_write_at=self._last_moisture_write_at,
