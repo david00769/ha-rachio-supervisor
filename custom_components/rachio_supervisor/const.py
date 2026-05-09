@@ -5,6 +5,7 @@ from __future__ import annotations
 DOMAIN = "rachio_supervisor"
 TITLE = "Rachio Supervisor"
 VERSION = "0.1.0"
+RACHIO_DOMAIN = "rachio"
 
 CONF_SITE_NAME = "site_name"
 CONF_RACHIO_CONFIG_ENTRY_ID = "rachio_config_entry_id"
@@ -17,3 +18,4 @@ DEFAULT_ZONE_COUNT = 7
 DEFAULT_OBSERVE_FIRST = True
 DEFAULT_ALLOW_MOISTURE_WRITE_BACK = False
 
+SERVICE_EVALUATE_NOW = "evaluate_now"

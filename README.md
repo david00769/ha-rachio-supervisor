@@ -18,9 +18,21 @@ This repository is the initial public seed:
 - HACS custom integration scaffold
 - recommended Lovelace dashboard package
 
-The full irrigation runtime is not complete in this initial seed. The current
-goal of the repo is to lock product scope, public interfaces, UX direction, and
-the integration structure before the full supervisor logic is implemented.
+The full irrigation runtime is not complete yet. The repo now includes the
+first real runtime milestone:
+
+- config flow links to an existing Home Assistant `rachio` entry
+- the integration discovers the linked Rachio entity surface from the entity
+  registry
+- site-level supervisor sensors expose health, linked controller posture,
+  actual-rain input status, and discovered zone counts
+
+The deeper irrigation logic is still pending:
+
+- Rachio event-history reasoning
+- catch-up decision engine
+- moisture write-back flows
+- zone-level status / reason entities
 
 ## Product stance
 
@@ -60,6 +72,25 @@ It is aimed at the operational gap between:
 - optional moisture write-back to Rachio
 - recommended irrigation workspace dashboard
 
+## Current runtime milestone
+
+Today the custom integration provides a narrow but real runtime:
+
+- config flow selects an existing Home Assistant `rachio` entry
+- actual rainfall is mapped from a selected sensor entity
+- the coordinator inspects the linked Rachio entry and publishes:
+  - health
+  - linked Rachio entry
+  - operating mode
+  - action posture
+  - actual rain, 24h
+  - active-zone count
+  - configured-zone count
+  - last refresh
+
+This milestone is intentionally site-level. Zone-level reasoning still belongs
+to the next implementation pass.
+
 ## HACS status
 
 The repository is structured as a single custom integration repo for HACS.
@@ -70,4 +101,3 @@ Initial HACS packaging is in place via:
 
 No release has been cut yet. The first release should happen only after the
 runtime behavior matches the documented public surface.
-

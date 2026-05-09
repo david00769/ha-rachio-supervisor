@@ -37,6 +37,12 @@ DESCRIPTIONS = (
         value_fn=lambda data: data.mode,
     ),
     RachioSupervisorSensorDescription(
+        key="linked_rachio_entry",
+        translation_key="linked_rachio_entry",
+        entity_category=EntityCategory.DIAGNOSTIC,
+        value_fn=lambda data: data.linked_entry_title,
+    ),
+    RachioSupervisorSensorDescription(
         key="action_posture",
         translation_key="action_posture",
         entity_category=EntityCategory.DIAGNOSTIC,
@@ -47,6 +53,21 @@ DESCRIPTIONS = (
         translation_key="rain_actuals_source",
         entity_category=EntityCategory.DIAGNOSTIC,
         value_fn=lambda data: data.rain_actuals_entity or "unconfigured",
+    ),
+    RachioSupervisorSensorDescription(
+        key="actual_rain_24h",
+        translation_key="actual_rain_24h",
+        value_fn=lambda data: data.actual_rain_value,
+    ),
+    RachioSupervisorSensorDescription(
+        key="active_zone_count",
+        translation_key="active_zone_count",
+        value_fn=lambda data: str(data.active_zone_count),
+    ),
+    RachioSupervisorSensorDescription(
+        key="configured_zone_count",
+        translation_key="configured_zone_count",
+        value_fn=lambda data: str(data.configured_zone_count),
     ),
     RachioSupervisorSensorDescription(
         key="last_refresh",
@@ -88,3 +109,30 @@ class RachioSupervisorSensor(RachioSupervisorEntity, SensorEntity):
         """Return the current sensor value."""
         return self.entity_description.value_fn(self.coordinator.data)
 
+    @property
+    def extra_state_attributes(self) -> dict[str, object] | None:
+        """Return contextual attributes for the current sensor."""
+        data = self.coordinator.data
+        if self.entity_description.key == "health":
+            return {
+                "linked_entry_title": data.linked_entry_title,
+                "linked_entry_state": data.linked_entry_state,
+                "connectivity": data.connectivity,
+                "rain_state": data.rain_state,
+                "rain_delay_state": data.rain_delay_state,
+                "standby_state": data.standby_state,
+                "notes": list(data.notes),
+            }
+        if self.entity_description.key == "actual_rain_24h":
+            return {
+                "unit_of_measurement": data.actual_rain_unit,
+                "status": data.rain_actuals_status,
+                "source_entity": data.rain_actuals_entity,
+            }
+        if self.entity_description.key == "configured_zone_count":
+            return {
+                "expected_zone_count": data.zone_count,
+                "discovered_schedule_count": data.active_schedule_count,
+                "discovered_entities": data.discovered_entities,
+            }
+        return None

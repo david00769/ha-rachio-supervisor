@@ -22,9 +22,13 @@ from .const import (
     DEFAULT_ZONE_COUNT,
     DOMAIN,
 )
+from .discovery import rachio_entry_options
 
 
-def _flow_schema(defaults: dict[str, Any] | None = None) -> vol.Schema:
+def _flow_schema(
+    rachio_options: list[tuple[str, str]],
+    defaults: dict[str, Any] | None = None,
+) -> vol.Schema:
     """Build the shared config form schema."""
     defaults = defaults or {}
     return vol.Schema(
@@ -37,15 +41,24 @@ def _flow_schema(defaults: dict[str, Any] | None = None) -> vol.Schema:
             ),
             vol.Required(
                 CONF_RACHIO_CONFIG_ENTRY_ID,
-                default=defaults.get(CONF_RACHIO_CONFIG_ENTRY_ID, ""),
-            ): selector.TextSelector(
-                selector.TextSelectorConfig(type=selector.TextSelectorType.TEXT)
+                default=defaults.get(
+                    CONF_RACHIO_CONFIG_ENTRY_ID,
+                    rachio_options[0][0] if rachio_options else "",
+                ),
+            ): selector.SelectSelector(
+                selector.SelectSelectorConfig(
+                    options=[
+                        selector.SelectOptionDict(value=value, label=label)
+                        for value, label in rachio_options
+                    ],
+                    mode=selector.SelectSelectorMode.DROPDOWN,
+                )
             ),
             vol.Required(
                 CONF_RAIN_ACTUALS_ENTITY,
                 default=defaults.get(CONF_RAIN_ACTUALS_ENTITY, ""),
             ): selector.EntitySelector(
-                selector.EntitySelectorConfig(multiple=False)
+                selector.EntitySelectorConfig(domain="sensor", multiple=False)
             ),
             vol.Required(
                 CONF_ZONE_COUNT,
@@ -76,6 +89,10 @@ class RachioSupervisorConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
 
     async def async_step_user(self, user_input: dict[str, Any] | None = None):
         """Handle the initial step."""
+        options = rachio_entry_options(self.hass)
+        if not options:
+            return self.async_abort(reason="no_rachio_entries")
+
         if user_input is not None:
             unique_id = user_input[CONF_RACHIO_CONFIG_ENTRY_ID].strip() or slugify(
                 user_input[CONF_SITE_NAME]
@@ -88,7 +105,10 @@ class RachioSupervisorConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 data=user_input,
             )
 
-        return self.async_show_form(step_id="user", data_schema=_flow_schema())
+        return self.async_show_form(
+            step_id="user",
+            data_schema=_flow_schema(options),
+        )
 
     @staticmethod
     def async_get_options_flow(config_entry: config_entries.ConfigEntry):
@@ -108,5 +128,8 @@ class RachioSupervisorOptionsFlow(config_entries.OptionsFlow):
             return self.async_create_entry(title="", data=user_input)
 
         defaults = {**self.config_entry.data, **self.config_entry.options}
-        return self.async_show_form(step_id="init", data_schema=_flow_schema(defaults))
-
+        options = rachio_entry_options(self.hass)
+        return self.async_show_form(
+            step_id="init",
+            data_schema=_flow_schema(options, defaults),
+        )

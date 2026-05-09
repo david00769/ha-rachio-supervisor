@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from dataclasses import asdict
+
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 
@@ -20,10 +22,10 @@ async def async_get_config_entry_diagnostics(
         "title": entry.title,
         "entry_data": entry.data,
         "entry_options": entry.options,
-        "snapshot": coordinator.data.__dict__,
+        "snapshot": asdict(coordinator.data),
         "notes": [
-            "This diagnostics payload reflects the public scaffold stage.",
-            "Full Rachio event and moisture evidence plumbing is not implemented yet.",
+            "This diagnostics payload reflects the first runtime milestone.",
+            "It links to an existing Home Assistant Rachio entry and publishes site-level evidence.",
+            "Full Rachio event history, catch-up policy, and moisture write-back flows are still pending.",
         ],
     }
-
