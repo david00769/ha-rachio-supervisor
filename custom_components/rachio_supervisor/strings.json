@@ -1,0 +1,54 @@
+{
+  "title": "Rachio Supervisor",
+  "config": {
+    "step": {
+      "user": {
+        "title": "Rachio Supervisor",
+        "description": "Create a Rachio-first supervision layer on top of an existing Home Assistant Rachio setup.",
+        "data": {
+          "site_name": "Site name",
+          "rachio_config_entry_id": "Existing Rachio config entry id",
+          "rain_actuals_entity": "Actual rainfall entity",
+          "zone_count": "Zone count",
+          "observe_first": "Start in observe-first mode",
+          "allow_moisture_write_back": "Allow moisture write-back mode"
+        }
+      }
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "Rachio Supervisor options",
+        "data": {
+          "site_name": "Site name",
+          "rachio_config_entry_id": "Existing Rachio config entry id",
+          "rain_actuals_entity": "Actual rainfall entity",
+          "zone_count": "Zone count",
+          "observe_first": "Start in observe-first mode",
+          "allow_moisture_write_back": "Allow moisture write-back mode"
+        }
+      }
+    }
+  },
+  "entity": {
+    "sensor": {
+      "health": {
+        "name": "Health"
+      },
+      "mode": {
+        "name": "Operating mode"
+      },
+      "action_posture": {
+        "name": "Action posture"
+      },
+      "rain_actuals_source": {
+        "name": "Rain actuals source"
+      },
+      "last_refresh": {
+        "name": "Last refresh"
+      }
+    }
+  }
+}
+

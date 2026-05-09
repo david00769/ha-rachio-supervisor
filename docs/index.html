@@ -1,0 +1,158 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Rachio Supervisor for Home Assistant</title>
+    <meta
+      name="description"
+      content="Operator-grade irrigation supervision for Home Assistant. Explain skips, audit actual rain, and add moisture-aware policy without replacing Rachio."
+    >
+    <link rel="stylesheet" href="./styles.css">
+  </head>
+  <body>
+    <header class="site-header">
+      <div class="brand-lockup">
+        <img src="./assets/logo-mark.svg" alt="Rachio Supervisor logo" class="brand-mark">
+        <span>Rachio Supervisor</span>
+      </div>
+      <nav>
+        <a href="../README.md">README</a>
+        <a href="../PRD.md">PRD</a>
+        <a href="./architecture.md">Architecture</a>
+      </nav>
+    </header>
+
+    <main>
+      <section class="hero">
+        <div class="hero-media"></div>
+        <div class="hero-copy reveal">
+          <p class="eyebrow">Home Assistant custom integration</p>
+          <h1>Trust your irrigation decisions again.</h1>
+          <p class="lede">
+            Explain Rachio skips. Verify actual rain. Add moisture-aware policy
+            without surrendering control to a black box.
+          </p>
+          <div class="hero-actions">
+            <a class="button primary" href="../PRD.md">Read the PRD</a>
+            <a class="button secondary" href="../examples/lovelace-irrigation-dashboard.yaml">View dashboard package</a>
+          </div>
+        </div>
+      </section>
+
+      <section class="support reveal">
+        <div class="section-intro">
+          <p class="section-label">Problem fit</p>
+          <h2>Rachio knows what it planned. You still need to know what really happened.</h2>
+        </div>
+        <div class="support-grid">
+          <div>
+            <h3>Planned intent</h3>
+            <p>Use Rachio for schedules, skips, delays, and controller-side history.</p>
+          </div>
+          <div>
+            <h3>Observed actuals</h3>
+            <p>Use Home Assistant rainfall and optional moisture sensors to judge the real outcome.</p>
+          </div>
+          <div>
+            <h3>Operator trust</h3>
+            <p>See reasons, catch-up candidates, webhook freshness, and action posture in one calm workspace.</p>
+          </div>
+        </div>
+      </section>
+
+      <section class="workflow reveal">
+        <div class="section-intro">
+          <p class="section-label">Workflow</p>
+          <h2>A restrained operator surface, not another sprinkler app.</h2>
+        </div>
+        <div class="workspace">
+          <aside class="workspace-sidebar">
+            <div class="mini-label">Site</div>
+            <h3>Sugarloaf</h3>
+            <ul>
+              <li>Observe-first</li>
+              <li>Rain actuals mapped</li>
+              <li>Moisture advisory on 4 zones</li>
+            </ul>
+          </aside>
+          <div class="workspace-main">
+            <div class="workspace-band">
+              <div>
+                <span class="metric-label">Supervisor health</span>
+                <strong>Healthy</strong>
+              </div>
+              <div>
+                <span class="metric-label">Actual rain, 24h</span>
+                <strong>2.4 mm</strong>
+              </div>
+              <div>
+                <span class="metric-label">Catch-up queue</span>
+                <strong>1 zone</strong>
+              </div>
+            </div>
+            <div class="zone-list">
+              <div class="zone-row">
+                <span>Lawn - Summer Green</span>
+                <span>Skipped by Rachio</span>
+                <span>Observed rain below threshold</span>
+                <span class="status status-review">Review</span>
+              </div>
+              <div class="zone-row">
+                <span>Driveway Hedge</span>
+                <span>Dry trend</span>
+                <span>Observe-only zone</span>
+                <span class="status">Advisory</span>
+              </div>
+              <div class="zone-row">
+                <span>Pots - Dawn Micro</span>
+                <span>Target band</span>
+                <span>No action</span>
+                <span class="status">Stable</span>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section class="detail reveal">
+        <div class="section-intro">
+          <p class="section-label">v1 posture</p>
+          <h2>Safe defaults. Opt-in action.</h2>
+        </div>
+        <div class="detail-columns">
+          <div>
+            <h3>Observe first</h3>
+            <p>Every zone starts in observation mode, with reasons and freshness visible before automation is allowed.</p>
+          </div>
+          <div>
+            <h3>Per-zone control</h3>
+            <p>Catch-up watering and moisture write-back are enabled deliberately, zone by zone, not globally by accident.</p>
+          </div>
+          <div>
+            <h3>Rachio-first</h3>
+            <p>Rachio remains the actuator and schedule authority. The supervisor adds policy and auditability around it.</p>
+          </div>
+        </div>
+      </section>
+
+      <section class="cta reveal">
+        <div>
+          <p class="section-label">Repository seed</p>
+          <h2>Public repo, formal PRD, HACS scaffold, recommended dashboard package.</h2>
+          <p>
+            This initial release locks the product contract and UX direction
+            before the full irrigation runtime lands.
+          </p>
+        </div>
+        <div class="cta-actions">
+          <a class="button primary" href="../README.md">Start with the README</a>
+          <a class="button secondary" href="./dashboard-package.md">Dashboard package</a>
+        </div>
+      </section>
+    </main>
+
+    <script src="./site.js"></script>
+  </body>
+</html>
+

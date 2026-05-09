@@ -1,0 +1,7 @@
+{
+  "name": "Rachio Supervisor for Home Assistant",
+  "homeassistant": "2026.5.0",
+  "render_readme": true,
+  "domains": ["rachio_supervisor"]
+}
+

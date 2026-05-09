@@ -1,0 +1,14 @@
+{
+  "domain": "rachio_supervisor",
+  "name": "Rachio Supervisor",
+  "codeowners": ["@david00769"],
+  "config_flow": true,
+  "dependencies": ["rachio"],
+  "documentation": "https://github.com/david00769/ha-rachio-supervisor#readme",
+  "integration_type": "service",
+  "iot_class": "cloud_polling",
+  "issue_tracker": "https://github.com/david00769/ha-rachio-supervisor/issues",
+  "requirements": [],
+  "version": "0.1.0"
+}
+

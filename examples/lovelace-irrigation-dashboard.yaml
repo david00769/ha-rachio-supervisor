@@ -1,0 +1,46 @@
+title: Irrigation
+path: irrigation
+icon: mdi:sprinkler-variant
+type: sections
+sections:
+  - type: grid
+    cards:
+      - type: heading
+        heading: Rachio Supervisor
+        heading_style: title
+      - type: tile
+        entity: sensor.rachio_supervisor_health
+        name: Supervisor health
+      - type: tile
+        entity: sensor.rachio_supervisor_last_refresh
+        name: Last refresh
+      - type: tile
+        entity: sensor.rachio_supervisor_rain_actuals_source
+        name: Rain actuals source
+      - type: tile
+        entity: sensor.rachio_supervisor_mode
+        name: Operating mode
+      - type: tile
+        entity: sensor.rachio_supervisor_action_posture
+        name: Action posture
+  - type: grid
+    cards:
+      - type: heading
+        heading: Zone review
+      - type: markdown
+        content: >
+          This package is the recommended operator layout target. The full
+          runtime entity model will add per-zone status, reason, moisture band,
+          and catch-up candidate entities once implementation lands.
+      - type: entities
+        title: Expected per-zone entity pattern
+        entities:
+          - entity: sensor.rachio_supervisor_zone_1_status
+            name: Zone 1 status
+          - entity: sensor.rachio_supervisor_zone_1_reason
+            name: Zone 1 reason
+          - entity: sensor.rachio_supervisor_zone_1_moisture_band
+            name: Zone 1 moisture band
+          - entity: sensor.rachio_supervisor_zone_1_catch_up_state
+            name: Zone 1 catch-up state
+

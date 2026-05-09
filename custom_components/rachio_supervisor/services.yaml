@@ -1,0 +1,19 @@
+evaluate_now:
+  name: Evaluate now
+  description: Re-run supervisor reasoning immediately for the configured site.
+run_catch_up_now:
+  name: Run catch-up now
+  description: Execute or simulate a catch-up watering action for a selected zone.
+write_moisture_now:
+  name: Write moisture now
+  description: Push the current interpreted moisture state back into Rachio for a selected zone.
+acknowledge_recommendation:
+  name: Acknowledge recommendation
+  description: Mark a recommendation as seen without dismissing the evidence.
+dismiss_recommendation:
+  name: Dismiss recommendation
+  description: Dismiss a current recommendation with an operator decision.
+pause_zone_policy:
+  name: Pause zone policy
+  description: Pause automatic or advisory policy evaluation for a selected zone.
+
