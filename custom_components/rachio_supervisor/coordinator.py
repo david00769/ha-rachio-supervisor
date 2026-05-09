@@ -67,6 +67,7 @@ class ScheduleSnapshot:
     moisture_status: str
     moisture_write_back_ready: str
     recommended_action: str
+    review_state: str
     last_run_at: str | None
     last_skip_at: str | None
     summary: str
@@ -132,6 +133,10 @@ class SupervisorSnapshot:
     moisture_write_queue: str
     recommended_moisture_write_count: int
     recommended_moisture_write_queue: str
+    active_recommendation_count: int
+    active_recommendation_queue: str
+    acknowledged_recommendation_count: int
+    acknowledged_recommendation_queue: str
     last_moisture_write_status: str
     last_moisture_write_at: str | None
     last_moisture_write_schedule: str | None
@@ -323,6 +328,7 @@ def apply_moisture_mapping(
     hass: HomeAssistant,
     schedules: tuple[ScheduleSnapshot, ...],
     schedule_moisture_map: dict[str, str],
+    acknowledged_recommendation_ids: set[str],
 ) -> tuple[ScheduleSnapshot, ...]:
     """Attach moisture mapping and banding to schedule snapshots."""
     hydrated: list[ScheduleSnapshot] = []
@@ -356,6 +362,12 @@ def apply_moisture_mapping(
             recommended_action = "write_moisture_now"
         else:
             recommended_action = "none"
+        if recommended_action == "none":
+            review_state = "clear"
+        elif schedule.rule_id in acknowledged_recommendation_ids:
+            review_state = "acknowledged"
+        else:
+            review_state = "pending_review"
         hydrated.append(
             ScheduleSnapshot(
                 rule_id=schedule.rule_id,
@@ -374,6 +386,7 @@ def apply_moisture_mapping(
                 moisture_status=moisture_status,
                 moisture_write_back_ready=schedule.moisture_write_back_ready,
                 recommended_action=recommended_action,
+                review_state=review_state,
                 last_run_at=schedule.last_run_at,
                 last_skip_at=schedule.last_skip_at,
                 summary=schedule.summary,
@@ -555,6 +568,7 @@ def build_rachio_evidence(
                 moisture_status="Moisture mapping not yet evaluated.",
                 moisture_write_back_ready=moisture_write_back_ready,
                 recommended_action="pending_moisture_eval",
+                review_state="pending_moisture_eval",
                 last_run_at=event_dt(run_event).isoformat() if run_event else None,
                 last_skip_at=event_dt(skip_event).isoformat() if skip_event else None,
                 summary=reason,
@@ -598,6 +612,7 @@ class RachioSupervisorCoordinator(DataUpdateCoordinator[SupervisorSnapshot]):
         self._last_moisture_write_at: str | None = None
         self._last_moisture_write_schedule: str | None = None
         self._last_moisture_write_value: str | None = None
+        self._acknowledged_recommendation_ids: set[str] = set()
 
     def record_moisture_write(
         self,
@@ -611,6 +626,18 @@ class RachioSupervisorCoordinator(DataUpdateCoordinator[SupervisorSnapshot]):
         self._last_moisture_write_at = datetime.now(tz=TZ).isoformat()
         self._last_moisture_write_schedule = schedule_name
         self._last_moisture_write_value = moisture_value
+
+    def set_recommendation_acknowledged(
+        self,
+        *,
+        rule_id: str,
+        acknowledged: bool,
+    ) -> None:
+        """Set or clear runtime acknowledgement for one schedule recommendation."""
+        if acknowledged:
+            self._acknowledged_recommendation_ids.add(rule_id)
+        else:
+            self._acknowledged_recommendation_ids.discard(rule_id)
 
     async def _async_update_data(self) -> SupervisorSnapshot:
         """Return the current site-level supervision snapshot."""
@@ -759,6 +786,7 @@ class RachioSupervisorCoordinator(DataUpdateCoordinator[SupervisorSnapshot]):
                     self.hass,
                     evidence.schedule_snapshots,
                     schedule_moisture_map,
+                    self._acknowledged_recommendation_ids,
                 )
                 if data.get(CONF_MOISTURE_SENSOR_ENTITIES, []) and not any(
                     schedule.moisture_entity_id for schedule in schedule_snapshots
@@ -799,6 +827,28 @@ class RachioSupervisorCoordinator(DataUpdateCoordinator[SupervisorSnapshot]):
             if recommended_moisture_writes
             else "none"
         )
+        active_recommendations = [
+            schedule
+            for schedule in schedule_snapshots
+            if schedule.review_state == "pending_review"
+        ]
+        active_recommendation_count = len(active_recommendations)
+        active_recommendation_queue = (
+            ", ".join(schedule.name for schedule in active_recommendations[:5])
+            if active_recommendations
+            else "none"
+        )
+        acknowledged_recommendations = [
+            schedule
+            for schedule in schedule_snapshots
+            if schedule.review_state == "acknowledged"
+        ]
+        acknowledged_recommendation_count = len(acknowledged_recommendations)
+        acknowledged_recommendation_queue = (
+            ", ".join(schedule.name for schedule in acknowledged_recommendations[:5])
+            if acknowledged_recommendations
+            else "none"
+        )
 
         return SupervisorSnapshot(
             health=health,
@@ -836,6 +886,10 @@ class RachioSupervisorCoordinator(DataUpdateCoordinator[SupervisorSnapshot]):
             moisture_write_queue=moisture_write_queue,
             recommended_moisture_write_count=recommended_moisture_write_count,
             recommended_moisture_write_queue=recommended_moisture_write_queue,
+            active_recommendation_count=active_recommendation_count,
+            active_recommendation_queue=active_recommendation_queue,
+            acknowledged_recommendation_count=acknowledged_recommendation_count,
+            acknowledged_recommendation_queue=acknowledged_recommendation_queue,
             last_moisture_write_status=self._last_moisture_write_status,
             last_moisture_write_at=self._last_moisture_write_at,
             last_moisture_write_schedule=self._last_moisture_write_schedule,

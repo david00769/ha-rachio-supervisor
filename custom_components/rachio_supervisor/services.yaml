@@ -29,3 +29,53 @@ write_moisture_now:
       required: false
       selector:
         text:
+
+acknowledge_recommendation:
+  name: Acknowledge recommendation
+  description: Mark one current schedule recommendation as reviewed for the current runtime session.
+  fields:
+    schedule_entity_id:
+      name: Schedule entity
+      description: Preferred stable target. Use the supervisor schedule entity id when available.
+      required: false
+      selector:
+        entity:
+          integration: rachio_supervisor
+          domain: sensor
+    schedule_name:
+      name: Schedule name
+      description: Fallback target when schedule entity id is not supplied.
+      required: false
+      selector:
+        text:
+    site_name:
+      name: Site name
+      description: Optional site label to disambiguate duplicate schedule names across entries.
+      required: false
+      selector:
+        text:
+
+clear_recommendation_acknowledgement:
+  name: Clear recommendation acknowledgement
+  description: Return one current schedule recommendation to the active review queue for the current runtime session.
+  fields:
+    schedule_entity_id:
+      name: Schedule entity
+      description: Preferred stable target. Use the supervisor schedule entity id when available.
+      required: false
+      selector:
+        entity:
+          integration: rachio_supervisor
+          domain: sensor
+    schedule_name:
+      name: Schedule name
+      description: Fallback target when schedule entity id is not supplied.
+      required: false
+      selector:
+        text:
+    site_name:
+      name: Site name
+      description: Optional site label to disambiguate duplicate schedule names across entries.
+      required: false
+      selector:
+        text:

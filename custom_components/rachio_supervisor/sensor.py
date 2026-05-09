@@ -121,6 +121,30 @@ DESCRIPTIONS = (
         entity_category=EntityCategory.DIAGNOSTIC,
         value_fn=lambda data: data.recommended_moisture_write_queue,
     ),
+    RachioSupervisorSensorDescription(
+        key="active_recommendation_count",
+        translation_key="active_recommendation_count",
+        entity_category=EntityCategory.DIAGNOSTIC,
+        value_fn=lambda data: str(data.active_recommendation_count),
+    ),
+    RachioSupervisorSensorDescription(
+        key="active_recommendation_queue",
+        translation_key="active_recommendation_queue",
+        entity_category=EntityCategory.DIAGNOSTIC,
+        value_fn=lambda data: data.active_recommendation_queue,
+    ),
+    RachioSupervisorSensorDescription(
+        key="acknowledged_recommendation_count",
+        translation_key="acknowledged_recommendation_count",
+        entity_category=EntityCategory.DIAGNOSTIC,
+        value_fn=lambda data: str(data.acknowledged_recommendation_count),
+    ),
+    RachioSupervisorSensorDescription(
+        key="acknowledged_recommendation_queue",
+        translation_key="acknowledged_recommendation_queue",
+        entity_category=EntityCategory.DIAGNOSTIC,
+        value_fn=lambda data: data.acknowledged_recommendation_queue,
+    ),
 )
 
 
@@ -142,6 +166,7 @@ async def async_setup_entry(
             ("moisture_band", "Moisture"),
             ("moisture_write_back_ready", "Write-back"),
             ("recommended_action", "Recommendation"),
+            ("review_state", "Review"),
             ("catch_up_candidate", "Catch-up candidate"),
         )
     )
@@ -239,6 +264,26 @@ class RachioSupervisorSensor(RachioSupervisorEntity, SensorEntity):
                 "recommended_moisture_write_count": data.recommended_moisture_write_count,
                 "write_back_mode_enabled": data.action_posture.endswith("write_back_available"),
             }
+        if self.entity_description.key == "active_recommendation_count":
+            return {
+                "active_recommendation_queue": data.active_recommendation_queue,
+                "review_acknowledgements_persisted": False,
+            }
+        if self.entity_description.key == "active_recommendation_queue":
+            return {
+                "active_recommendation_count": data.active_recommendation_count,
+                "review_acknowledgements_persisted": False,
+            }
+        if self.entity_description.key == "acknowledged_recommendation_count":
+            return {
+                "acknowledged_recommendation_queue": data.acknowledged_recommendation_queue,
+                "review_acknowledgements_persisted": False,
+            }
+        if self.entity_description.key == "acknowledged_recommendation_queue":
+            return {
+                "acknowledged_recommendation_count": data.acknowledged_recommendation_count,
+                "review_acknowledgements_persisted": False,
+            }
         return None
 
 
@@ -293,6 +338,8 @@ class RachioSupervisorScheduleSensor(RachioSupervisorEntity, SensorEntity):
             "moisture_status": schedule.moisture_status,
             "moisture_write_back_ready": schedule.moisture_write_back_ready,
             "recommended_action": schedule.recommended_action,
+            "review_state": schedule.review_state,
+            "review_acknowledgements_persisted": False,
             "last_run_at": schedule.last_run_at,
             "last_skip_at": schedule.last_skip_at,
             "observed_mm": schedule.observed_mm,

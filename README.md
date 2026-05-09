@@ -52,6 +52,10 @@ first real runtime milestones:
 - the site-level entity model now also exposes which schedules are actually
   recommended for manual moisture write-back through `Recommended moisture
   writes` and `Recommended moisture queue`
+- the operator surface now also exposes which recommendations are still pending
+  review versus already acknowledged in the current runtime session through
+  `Active recommendations`, `Active recommendation queue`, `Acknowledged
+  recommendations`, and `Acknowledged recommendation queue`
 - schedule-level sensors now expose:
   - status
   - reason
@@ -59,6 +63,7 @@ first real runtime milestones:
   - moisture
   - write-back
   - recommendation
+  - review
   - catch-up candidate
 - site-level diagnostics now also expose:
   - last moisture write
@@ -66,6 +71,10 @@ first real runtime milestones:
   - moisture write queue
   - recommended moisture writes
   - recommended moisture queue
+  - active recommendations
+  - active recommendation queue
+  - acknowledged recommendations
+  - acknowledged recommendation queue
 
 The deeper irrigation logic is still pending:
 
@@ -131,6 +140,10 @@ Today the custom integration provides a narrow but real runtime:
   - last refresh
   - recommended moisture writes
   - recommended moisture queue
+  - active recommendations
+  - active recommendation queue
+  - acknowledged recommendations
+  - acknowledged recommendation queue
 - schedule-level sensors for each active Rachio schedule:
   - status
   - reason
@@ -138,13 +151,16 @@ Today the custom integration provides a narrow but real runtime:
   - moisture
   - write-back
   - recommendation
+  - review
   - catch-up candidate
 
 This milestone is still intentionally narrow. It does not yet execute automatic
 catch-up or broad autonomous moisture write-back. Moisture support currently
 means candidate sensor selection, explicit per-schedule mapping, coarse
-moisture-band state, plus a manual write-back service. It still does not
-trigger watering on its own.
+moisture-band state, a runtime review queue, plus manual write-back and review
+acknowledgement services. Review acknowledgements are not persisted yet; they
+reset when the integration reloads. It still does not trigger watering on its
+own.
 
 ## HACS status
 

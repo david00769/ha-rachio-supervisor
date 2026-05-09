@@ -37,6 +37,18 @@ sections:
         entity: sensor.rachio_supervisor_recommended_moisture_write_queue
         name: Recommended moisture queue
       - type: tile
+        entity: sensor.rachio_supervisor_active_recommendation_count
+        name: Active recommendations
+      - type: tile
+        entity: sensor.rachio_supervisor_active_recommendation_queue
+        name: Active review queue
+      - type: tile
+        entity: sensor.rachio_supervisor_acknowledged_recommendation_count
+        name: Acknowledged recommendations
+      - type: tile
+        entity: sensor.rachio_supervisor_acknowledged_recommendation_queue
+        name: Acknowledged review queue
+      - type: tile
         entity: sensor.rachio_supervisor_ready_moisture_write_count
         name: Ready moisture writes
       - type: tile
@@ -66,5 +78,7 @@ sections:
             name: Lawn - Summer Green / Write-back
           - entity: sensor.rachio_supervisor_lawn_summer_green_recommendation
             name: Lawn - Summer Green / Recommendation
+          - entity: sensor.rachio_supervisor_lawn_summer_green_review
+            name: Lawn - Summer Green / Review
           - entity: sensor.rachio_supervisor_lawn_summer_green_catch_up_candidate
             name: Lawn - Summer Green / Catch-up candidate

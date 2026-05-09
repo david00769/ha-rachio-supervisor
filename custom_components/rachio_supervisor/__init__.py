@@ -15,6 +15,8 @@ from homeassistant.helpers import config_validation as cv
 from .const import (
     CONF_ALLOW_MOISTURE_WRITE_BACK,
     DOMAIN,
+    SERVICE_ACKNOWLEDGE_RECOMMENDATION,
+    SERVICE_CLEAR_RECOMMENDATION_ACKNOWLEDGEMENT,
     SERVICE_EVALUATE_NOW,
     SERVICE_WRITE_MOISTURE_NOW,
 )
@@ -157,11 +159,78 @@ async def _async_handle_write_moisture_now(
     await coordinator.async_request_refresh()
 
 
+async def _async_handle_recommendation_ack(
+    hass: HomeAssistant,
+    call: ServiceCall,
+    *,
+    acknowledged: bool,
+) -> None:
+    """Set or clear runtime acknowledgement for one recommendation."""
+    coordinators = hass.data.get(DOMAIN, {})
+    if not coordinators:
+        raise HomeAssistantError("No Rachio Supervisor entries are loaded.")
+
+    schedule_name = (
+        str(call.data["schedule_name"]) if call.data.get("schedule_name") else None
+    )
+    schedule_entity_id = (
+        str(call.data["schedule_entity_id"])
+        if call.data.get("schedule_entity_id")
+        else None
+    )
+    if not schedule_name and not schedule_entity_id:
+        raise HomeAssistantError(
+            "Provide either schedule_entity_id or schedule_name."
+        )
+    site_name = call.data.get("site_name")
+    coordinator, schedule = _find_schedule_target(
+        coordinators,
+        schedule_name,
+        schedule_entity_id,
+        site_name,
+    )
+    coordinator.set_recommendation_acknowledged(
+        rule_id=schedule.rule_id,
+        acknowledged=acknowledged,
+    )
+    await coordinator.async_request_refresh()
+
+
+async def _async_handle_acknowledge_recommendation(
+    hass: HomeAssistant,
+    call: ServiceCall,
+) -> None:
+    """Mark one current recommendation as reviewed."""
+    await _async_handle_recommendation_ack(
+        hass,
+        call,
+        acknowledged=True,
+    )
+
+
+async def _async_handle_clear_recommendation_acknowledgement(
+    hass: HomeAssistant,
+    call: ServiceCall,
+) -> None:
+    """Return one recommendation to the active review queue."""
+    await _async_handle_recommendation_ack(
+        hass,
+        call,
+        acknowledged=False,
+    )
+
+
 @callback
 def _async_register_services(hass: HomeAssistant) -> Callable[[], None]:
     """Register domain services once."""
     if hass.services.has_service(DOMAIN, SERVICE_EVALUATE_NOW):
         return lambda: None
+
+    async def _handle_ack(call: ServiceCall) -> None:
+        await _async_handle_acknowledge_recommendation(hass, call)
+
+    async def _handle_clear_ack(call: ServiceCall) -> None:
+        await _async_handle_clear_recommendation_acknowledgement(hass, call)
 
     hass.services.async_register(
         DOMAIN,
@@ -181,10 +250,38 @@ def _async_register_services(hass: HomeAssistant) -> Callable[[], None]:
             }
         ),
     )
+    hass.services.async_register(
+        DOMAIN,
+        SERVICE_ACKNOWLEDGE_RECOMMENDATION,
+        _handle_ack,
+        schema=vol.Schema(
+            {
+                vol.Optional("schedule_name"): cv.string,
+                vol.Optional("schedule_entity_id"): cv.entity_id,
+                vol.Optional("site_name"): cv.string,
+            }
+        ),
+    )
+    hass.services.async_register(
+        DOMAIN,
+        SERVICE_CLEAR_RECOMMENDATION_ACKNOWLEDGEMENT,
+        _handle_clear_ack,
+        schema=vol.Schema(
+            {
+                vol.Optional("schedule_name"): cv.string,
+                vol.Optional("schedule_entity_id"): cv.entity_id,
+                vol.Optional("site_name"): cv.string,
+            }
+        ),
+    )
 
     def _remove() -> None:
         hass.services.async_remove(DOMAIN, SERVICE_EVALUATE_NOW)
         hass.services.async_remove(DOMAIN, SERVICE_WRITE_MOISTURE_NOW)
+        hass.services.async_remove(DOMAIN, SERVICE_ACKNOWLEDGE_RECOMMENDATION)
+        hass.services.async_remove(
+            DOMAIN, SERVICE_CLEAR_RECOMMENDATION_ACKNOWLEDGEMENT
+        )
 
     return _remove
 

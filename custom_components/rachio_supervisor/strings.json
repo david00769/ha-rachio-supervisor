@@ -116,6 +116,18 @@
       },
       "recommended_moisture_write_queue": {
         "name": "Recommended moisture queue"
+      },
+      "active_recommendation_count": {
+        "name": "Active recommendations"
+      },
+      "active_recommendation_queue": {
+        "name": "Active recommendation queue"
+      },
+      "acknowledged_recommendation_count": {
+        "name": "Acknowledged recommendations"
+      },
+      "acknowledged_recommendation_queue": {
+        "name": "Acknowledged recommendation queue"
       }
     }
   }

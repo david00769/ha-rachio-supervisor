@@ -29,3 +29,5 @@ DEFAULT_SCHEDULE_MOISTURE_MAP: dict[str, str] = {}
 
 SERVICE_EVALUATE_NOW = "evaluate_now"
 SERVICE_WRITE_MOISTURE_NOW = "write_moisture_now"
+SERVICE_ACKNOWLEDGE_RECOMMENDATION = "acknowledge_recommendation"
+SERVICE_CLEAR_RECOMMENDATION_ACKNOWLEDGEMENT = "clear_recommendation_acknowledgement"
