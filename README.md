@@ -106,6 +106,26 @@ The deeper irrigation logic is still pending:
   or calibrated-flow fields; the Supervisor can verify and clear its own review
   state after a calibration event appears in Rachio history
 
+## Local verification bar
+
+The current local verification work now includes deterministic coverage for:
+
+- config flow with optional rain inputs and no moisture sensors
+- options flow moisture-mapping behavior
+- site-level entity naming and state exposure
+- diagnostics payload shape
+- observed-rain `unknown / not_reported` semantics
+- degraded/healthy cadence transitions
+- flow-alert lifecycle and clear-review restrictions
+
+The current deterministic suite lives in:
+
+- [`tests/test_supervisor_logic.py`](./tests/test_supervisor_logic.py)
+
+This is still not the full cutover gate. The real release gate remains a
+7-day live shadow comparison against the old Codex-published Sugarloaf
+supervisor.
+
 ## Flow alert review contract
 
 Flow alert handling is intentionally conservative.
@@ -183,6 +203,7 @@ It is aimed at the operational gap between:
 - [docs/architecture.md](./docs/architecture.md) - integration and runtime shape
 - [docs/dashboard-package.md](./docs/dashboard-package.md) - recommended Lovelace surface
 - [examples/lovelace-irrigation-dashboard.yaml](./examples/lovelace-irrigation-dashboard.yaml) - operator dashboard example
+- [docs/assets/screenshots/shadow-dashboard-desktop.png](./docs/assets/screenshots/shadow-dashboard-desktop.png) - current live shadow dashboard capture used for frontend critique
 - [`custom_components/rachio_supervisor/`](./custom_components/rachio_supervisor) - custom integration scaffold
 
 ## Planned v1 capabilities

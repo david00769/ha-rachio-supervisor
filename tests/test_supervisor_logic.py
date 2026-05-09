@@ -12,8 +12,10 @@ from datetime import datetime, timezone
 import importlib
 from pathlib import Path
 import sys
+from types import SimpleNamespace
 import types
 import unittest
+from unittest.mock import patch
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -60,8 +62,46 @@ def _install_homeassistant_stubs() -> None:
             self.options = options or {}
             self.state = state or ConfigEntryState.LOADED
 
+    class ConfigFlow:
+        def __init_subclass__(cls, **kwargs):
+            return None
+
+        async def async_set_unique_id(self, unique_id: str) -> None:
+            self._last_unique_id = unique_id
+
+        def _abort_if_unique_id_configured(self) -> None:
+            return None
+
+        def async_show_form(self, *, step_id: str, data_schema=None, description_placeholders=None):
+            return {
+                "type": "form",
+                "step_id": step_id,
+                "data_schema": data_schema,
+                "description_placeholders": description_placeholders,
+            }
+
+        def async_create_entry(self, *, title: str, data: dict):
+            return {"type": "create_entry", "title": title, "data": data}
+
+        def async_abort(self, *, reason: str):
+            return {"type": "abort", "reason": reason}
+
+    class OptionsFlow:
+        def async_show_form(self, *, step_id: str, data_schema=None, description_placeholders=None):
+            return {
+                "type": "form",
+                "step_id": step_id,
+                "data_schema": data_schema,
+                "description_placeholders": description_placeholders,
+            }
+
+        def async_create_entry(self, *, title: str, data: dict):
+            return {"type": "create_entry", "title": title, "data": data}
+
     config_entries.ConfigEntry = ConfigEntry
     config_entries.ConfigEntryState = ConfigEntryState
+    config_entries.ConfigFlow = ConfigFlow
+    config_entries.OptionsFlow = OptionsFlow
     sys.modules["homeassistant.config_entries"] = config_entries
 
     const = types.ModuleType("homeassistant.const")
@@ -103,6 +143,74 @@ def _install_homeassistant_stubs() -> None:
     helpers_pkg = types.ModuleType("homeassistant.helpers")
     sys.modules["homeassistant.helpers"] = helpers_pkg
 
+    selector = types.ModuleType("homeassistant.helpers.selector")
+
+    class _SelectorConfig:
+        def __init__(self, **kwargs) -> None:
+            self.kwargs = kwargs
+
+    class _Selector:
+        def __init__(self, config) -> None:
+            self.config = config
+
+    class TextSelectorType:
+        TEXT = "text"
+
+    class SelectSelectorMode:
+        DROPDOWN = "dropdown"
+
+    class NumberSelectorMode:
+        BOX = "box"
+
+    class TextSelectorConfig(_SelectorConfig):
+        pass
+
+    class SelectSelectorConfig(_SelectorConfig):
+        pass
+
+    class NumberSelectorConfig(_SelectorConfig):
+        pass
+
+    class EntitySelectorConfig(_SelectorConfig):
+        pass
+
+    class TextSelector(_Selector):
+        pass
+
+    class SelectSelector(_Selector):
+        pass
+
+    class NumberSelector(_Selector):
+        pass
+
+    class BooleanSelector(_Selector):
+        def __init__(self) -> None:
+            self.config = None
+
+    class EntitySelector(_Selector):
+        pass
+
+    @dataclass
+    class SelectOptionDict:
+        value: str
+        label: str
+
+    selector.TextSelectorType = TextSelectorType
+    selector.SelectSelectorMode = SelectSelectorMode
+    selector.NumberSelectorMode = NumberSelectorMode
+    selector.TextSelectorConfig = TextSelectorConfig
+    selector.SelectSelectorConfig = SelectSelectorConfig
+    selector.NumberSelectorConfig = NumberSelectorConfig
+    selector.EntitySelectorConfig = EntitySelectorConfig
+    selector.TextSelector = TextSelector
+    selector.SelectSelector = SelectSelector
+    selector.NumberSelector = NumberSelector
+    selector.BooleanSelector = BooleanSelector
+    selector.EntitySelector = EntitySelector
+    selector.SelectOptionDict = SelectOptionDict
+    sys.modules["homeassistant.helpers.selector"] = selector
+    helpers_pkg.selector = selector
+
     cv = types.ModuleType("homeassistant.helpers.config_validation")
     cv.entity_ids = object()
     cv.entity_id = object()
@@ -121,6 +229,26 @@ def _install_homeassistant_stubs() -> None:
     er.async_get = async_get
     sys.modules["homeassistant.helpers.entity_registry"] = er
 
+    device_registry = types.ModuleType("homeassistant.helpers.device_registry")
+
+    @dataclass
+    class DeviceInfo:
+        identifiers: set[tuple[str, str]]
+        manufacturer: str
+        model: str
+        name: str
+
+    device_registry.DeviceInfo = DeviceInfo
+    sys.modules["homeassistant.helpers.device_registry"] = device_registry
+
+    entity_platform = types.ModuleType("homeassistant.helpers.entity_platform")
+
+    class AddEntitiesCallback:
+        pass
+
+    entity_platform.AddEntitiesCallback = AddEntitiesCallback
+    sys.modules["homeassistant.helpers.entity_platform"] = entity_platform
+
     update = types.ModuleType("homeassistant.helpers.update_coordinator")
 
     class DataUpdateCoordinator:
@@ -133,7 +261,15 @@ def _install_homeassistant_stubs() -> None:
         async def async_request_refresh(self) -> None:
             return None
 
+    class CoordinatorEntity:
+        def __init__(self, coordinator) -> None:
+            self.coordinator = coordinator
+
+        def __class_getitem__(cls, _item):
+            return cls
+
     update.DataUpdateCoordinator = DataUpdateCoordinator
+    update.CoordinatorEntity = CoordinatorEntity
     sys.modules["homeassistant.helpers.update_coordinator"] = update
 
     util_pkg = types.ModuleType("homeassistant.util")
@@ -143,6 +279,26 @@ def _install_homeassistant_stubs() -> None:
     dt_mod.as_local = lambda value: value
     dt_mod.now = lambda: datetime(2026, 5, 9, 12, 0, 0)
     sys.modules["homeassistant.util.dt"] = dt_mod
+
+    util_pkg.slugify = lambda value: str(value).strip().lower().replace(" ", "_")
+
+    sensor_component = types.ModuleType("homeassistant.components.sensor")
+
+    @dataclass(frozen=True, kw_only=True)
+    class SensorEntityDescription:
+        key: str
+        translation_key: str | None = None
+        entity_category: object | None = None
+
+    class SensorEntity:
+        pass
+
+    sensor_component.SensorEntity = SensorEntity
+    sensor_component.SensorEntityDescription = SensorEntityDescription
+    sys.modules["homeassistant.components.sensor"] = sensor_component
+
+    entity_category = types.SimpleNamespace(DIAGNOSTIC="diagnostic")
+    const.EntityCategory = entity_category
 
     voluptuous = types.ModuleType("voluptuous")
 
@@ -156,21 +312,52 @@ def _install_homeassistant_stubs() -> None:
     def Schema(value):
         return _Schema(value)
 
-    def Optional(value):
+    def _freeze_marker_value(value):
+        if isinstance(value, list):
+            return tuple(_freeze_marker_value(item) for item in value)
+        if isinstance(value, dict):
+            return tuple(sorted((key, _freeze_marker_value(item)) for key, item in value.items()))
         return value
+
+    @dataclass(frozen=True)
+    class _VolMarker:
+        kind: str
+        value: object
+        default: object = None
+
+        def __hash__(self) -> int:
+            return hash(
+                (
+                    self.kind,
+                    _freeze_marker_value(self.value),
+                    _freeze_marker_value(self.default),
+                )
+            )
+
+    def Optional(value, default=None):
+        return _VolMarker("optional", value, default)
+
+    def Required(value, default=None):
+        return _VolMarker("required", value, default)
 
     voluptuous.Schema = Schema
     voluptuous.Optional = Optional
+    voluptuous.Required = Required
     sys.modules["voluptuous"] = voluptuous
 
 
 _install_homeassistant_stubs()
 
 integration_init = importlib.import_module("custom_components.rachio_supervisor")
+config_flow = importlib.import_module("custom_components.rachio_supervisor.config_flow")
+diagnostics = importlib.import_module("custom_components.rachio_supervisor.diagnostics")
+sensor_module = importlib.import_module("custom_components.rachio_supervisor.sensor")
 from custom_components.rachio_supervisor.const import DOMAIN
 from custom_components.rachio_supervisor.coordinator import (
     FlowAlertSnapshot,
     RachioSupervisorCoordinator,
+    ScheduleSnapshot,
+    SupervisorSnapshot,
     build_flow_alert_snapshots,
     observed_rain_24h,
 )
@@ -474,6 +661,255 @@ class CadenceParityTests(unittest.TestCase):
         self.assertEqual(first, "degraded")
         self.assertEqual(second, "healthy")
         self.assertIsNone(coordinator._degraded_since)
+
+
+class ConfigFlowBehaviorTests(unittest.TestCase):
+    def _hass(self) -> SimpleNamespace:
+        return SimpleNamespace(
+            states=SimpleNamespace(get=lambda _entity_id: None),
+            config_entries=SimpleNamespace(async_entries=lambda _domain=None: []),
+        )
+
+    def test_user_step_aborts_without_linked_rachio_entries(self) -> None:
+        flow = config_flow.RachioSupervisorConfigFlow()
+        flow.hass = self._hass()
+
+        with patch.object(config_flow, "rachio_entry_options", return_value=[]):
+            result = asyncio.run(flow.async_step_user())
+
+        self.assertEqual(result["type"], "abort")
+        self.assertEqual(result["reason"], "no_rachio_entries")
+
+    def test_user_step_shows_form_when_entries_exist(self) -> None:
+        flow = config_flow.RachioSupervisorConfigFlow()
+        flow.hass = self._hass()
+
+        with patch.object(
+            config_flow,
+            "rachio_entry_options",
+            return_value=[("entry-1", "Sugarloaf Rachio")],
+        ):
+            result = asyncio.run(flow.async_step_user())
+
+        self.assertEqual(result["type"], "form")
+        self.assertEqual(result["step_id"], "user")
+
+    def test_config_flow_skips_moisture_map_when_no_sensors_selected(self) -> None:
+        flow = config_flow.RachioSupervisorConfigFlow()
+        flow.hass = self._hass()
+        flow._basic_input = {
+            "site_name": "Sugarloaf",
+            "rachio_config_entry_id": "entry-1",
+            "moisture_sensor_entities": [],
+        }
+        flow._policy_input = {
+            "auto_catch_up_schedule_entities": [],
+            "auto_missed_run_schedule_entities": [],
+        }
+
+        result = asyncio.run(flow.async_step_moisture_map())
+
+        self.assertEqual(result["type"], "create_entry")
+        self.assertEqual(result["title"], "Sugarloaf")
+        self.assertEqual(result["data"]["schedule_moisture_map"], {})
+        self.assertEqual(flow._last_unique_id, "rachio_supervisor::entry-1")
+
+    def test_config_flow_collects_explicit_moisture_mapping(self) -> None:
+        state_map = {
+            "sensor.moisture_pots": SimpleNamespace(
+                attributes={"friendly_name": "Pots moisture"}
+            )
+        }
+        flow = config_flow.RachioSupervisorConfigFlow()
+        flow.hass = SimpleNamespace(
+            states=SimpleNamespace(get=lambda entity_id: state_map.get(entity_id)),
+            config_entries=SimpleNamespace(async_entries=lambda _domain=None: []),
+        )
+        flow._basic_input = {
+            "site_name": "Sugarloaf",
+            "rachio_config_entry_id": "entry-1",
+            "moisture_sensor_entities": ["sensor.moisture_pots"],
+        }
+        flow._policy_input = {
+            "auto_catch_up_schedule_entities": [],
+            "auto_missed_run_schedule_entities": [],
+        }
+        flow._schedule_options = [("switch.schedule_pots", "Pots - Dawn Micro")]
+
+        prompt = asyncio.run(flow.async_step_moisture_map())
+        self.assertEqual(prompt["type"], "form")
+        self.assertEqual(prompt["step_id"], "moisture_map")
+
+        result = asyncio.run(
+            flow.async_step_moisture_map({"moisture_entity": "sensor.moisture_pots"})
+        )
+        self.assertEqual(result["type"], "create_entry")
+        self.assertEqual(
+            result["data"]["schedule_moisture_map"],
+            {"switch.schedule_pots": "sensor.moisture_pots"},
+        )
+
+    def test_options_flow_skips_mapping_when_no_sensors_selected(self) -> None:
+        entry = SimpleNamespace(data={"site_name": "Sugarloaf"}, options={})
+        flow = config_flow.RachioSupervisorOptionsFlow(entry)
+        flow.hass = self._hass()
+        flow._basic_input = {"moisture_sensor_entities": []}
+        flow._policy_input = {"auto_catch_up_schedule_entities": []}
+
+        result = asyncio.run(flow.async_step_moisture_map())
+
+        self.assertEqual(result["type"], "create_entry")
+        self.assertEqual(result["data"]["schedule_moisture_map"], {})
+
+
+class DiagnosticsAndEntityTests(unittest.TestCase):
+    def _snapshot(self) -> SupervisorSnapshot:
+        schedule = ScheduleSnapshot(
+            rule_id="rule-1",
+            name="Pots - Dawn Micro",
+            status="idle",
+            reason="none",
+            catch_up_candidate="not_needed",
+            policy_mode="observe_only",
+            policy_basis="default",
+            schedule_entity_id="switch.schedule_pots",
+            zone_entity_id="switch.zone_pots",
+            controller_zone_id="zone-1",
+            moisture_entity_id="sensor.pots_moisture",
+            moisture_value="42",
+            moisture_band="target",
+            moisture_status="ok",
+            moisture_write_back_ready="ready",
+            recommended_action="none",
+            review_state="none",
+            runtime_minutes=3,
+            last_run_at="2026-05-09T11:00:00",
+            last_skip_at="2026-05-09T10:00:00",
+            summary="Pots review summary",
+            threshold_mm=6.35,
+            observed_mm=None,
+        )
+        return SupervisorSnapshot(
+            health="healthy",
+            supervisor_mode="healthy",
+            supervisor_reason="Fresh evidence.",
+            mode="observe_only",
+            action_posture="per_zone_opt_in",
+            site_name="Sugarloaf",
+            linked_entry_title="Sugarloaf Rachio",
+            linked_entry_state="loaded",
+            rachio_config_entry_id="entry-1",
+            rain_actuals_entity="sensor.rain_24h",
+            zone_count=7,
+            configured_zone_count=7,
+            active_zone_count=0,
+            active_schedule_count=0,
+            connectivity="on",
+            rain_state="off",
+            rain_delay_state="off",
+            standby_state="off",
+            actual_rain_value="0.0",
+            actual_rain_unit="mm",
+            rain_actuals_status="ok",
+            controller_name="Yard Controller",
+            controller_id="controller-1",
+            last_event_summary="Last event",
+            last_event_at="2026-05-09T12:00:00",
+            last_run_summary="Last run",
+            last_run_at="2026-05-09T11:00:00",
+            last_skip_summary="Last skip",
+            last_skip_at="2026-05-09T10:00:00",
+            observed_rain_24h="unknown",
+            observed_rain_status="not_reported",
+            observed_rain_best_event={"latest_skip_event_id": "skip-1"},
+            webhook_count=1,
+            webhook_health="healthy",
+            webhook_url="https://example.invalid/webhook",
+            webhook_external_id="homeassistant.rachio:abc",
+            ready_moisture_write_count=1,
+            moisture_write_queue="Pots - Dawn Micro",
+            recommended_moisture_write_count=1,
+            recommended_moisture_write_queue="Pots - Dawn Micro",
+            active_recommendation_count=1,
+            active_recommendation_queue="Pots - Dawn Micro",
+            acknowledged_recommendation_count=0,
+            acknowledged_recommendation_queue="none",
+            catch_up_evidence_status="monitoring",
+            catch_up_evidence_reason="monitoring",
+            catch_up_schedule_name=None,
+            catch_up_runtime_minutes=0,
+            catch_up_summary="No active catch-up candidate.",
+            catch_up_decision_at=None,
+            last_catch_up_decision="none",
+            active_flow_alert_count=0,
+            flow_alert_queue="none",
+            last_flow_alert_decision="none",
+            last_reconciliation="2026-05-09T12:15:00",
+            last_moisture_write_status="none",
+            last_moisture_write_at=None,
+            last_moisture_write_schedule=None,
+            last_moisture_write_value=None,
+            last_refresh="2026-05-09T12:15:00",
+            notes=("All good",),
+            discovered_entities={"entity_count": 10},
+            schedule_snapshots=(schedule,),
+        )
+
+    def test_diagnostics_payload_contains_snapshot_and_notes(self) -> None:
+        snapshot = self._snapshot()
+        coordinator = SimpleNamespace(data=snapshot)
+        hass = SimpleNamespace(data={DOMAIN: {"entry-1": coordinator}})
+        entry = SimpleNamespace(
+            entry_id="entry-1",
+            title="Sugarloaf",
+            data={"site_name": "Sugarloaf"},
+            options={"observe_first": True},
+        )
+
+        payload = asyncio.run(diagnostics.async_get_config_entry_diagnostics(hass, entry))
+
+        self.assertEqual(payload["domain"], DOMAIN)
+        self.assertEqual(payload["snapshot"]["health"], "healthy")
+        self.assertIn("Automatic irrigation behavior remains intentionally narrow and opt-in.", payload["notes"])
+
+    def test_site_sensor_sets_explicit_name_and_attributes(self) -> None:
+        snapshot = self._snapshot()
+        coordinator = SimpleNamespace(
+            entry=SimpleNamespace(entry_id="entry-1", title="Sugarloaf"),
+            data=snapshot,
+            _cached_evidence=None,
+        )
+        description = next(
+            item for item in sensor_module.DESCRIPTIONS if item.key == "recommended_moisture_write_count"
+        )
+
+        entity = sensor_module.RachioSupervisorSensor(coordinator, description)
+
+        self.assertEqual(entity._attr_name, "Recommended moisture writes")
+        self.assertEqual(entity.native_value, "1")
+        self.assertEqual(
+            entity.extra_state_attributes["recommended_moisture_write_queue"],
+            "Pots - Dawn Micro",
+        )
+
+    def test_schedule_sensor_exposes_schedule_context(self) -> None:
+        snapshot = self._snapshot()
+        coordinator = SimpleNamespace(
+            entry=SimpleNamespace(entry_id="entry-1", title="Sugarloaf"),
+            data=snapshot,
+        )
+        schedule = snapshot.schedule_snapshots[0]
+
+        entity = sensor_module.RachioSupervisorScheduleSensor(
+            coordinator,
+            schedule,
+            "moisture_band",
+            "Moisture",
+        )
+
+        self.assertEqual(entity.native_value, "target")
+        self.assertEqual(entity.extra_state_attributes["moisture_entity_id"], "sensor.pots_moisture")
+        self.assertEqual(entity.extra_state_attributes["controller_zone_id"], "zone-1")
 
 
 if __name__ == "__main__":

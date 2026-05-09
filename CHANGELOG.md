@@ -21,3 +21,6 @@
 - Added the fourteenth runtime milestone: the supervisor now detects recent low-flow/high-flow alert events, compares later native calibration baselines against the prior baseline when available, exposes flow-alert review sensors, and adds a `clear_flow_alert_review` service for Supervisor-side review cleanup. Native Rachio calibration execution remains outside the public API boundary.
 - Tightened the flow-alert review gate: `normal_after_calibration` no longer auto-clears. The Supervisor now requires an explicit clear step, and that clear step is only allowed after a stable post-alert calibration comparison.
 - Fixed a shadow-install naming bug where site-level diagnostic sensors could be registered without names and end up with generic entity ids such as `sensor.sugarloaf_8`.
+- Expanded the deterministic test harness so local coverage now includes config-flow optional-input behavior, options-flow moisture mapping, site-level entity naming/state exposure, and diagnostics payload shape.
+- Replaced the stale dashboard example with the accepted live `Irrigation Shadow` layout using stable `sensor.rachio_site_*` entities.
+- Added screenshot assets for the current live shadow dashboard and documented a frontend-skill critique of the current operator surface, including the remaining `Recent decisions` density issue on narrow widths.

@@ -166,6 +166,15 @@ Moisture write-back:
 - zone-level opt-in
 - not the primary control model
 
+Dashboard stance:
+
+- moisture is shown as a schedule-linked review signal
+- moisture is expressed through bands and recommendations before raw telemetry
+- manual write-back to Rachio comes before any automatic moisture-assisted
+  action
+- no automatic top-up watering is implied by the mere existence of a moisture
+  sensor
+
 ### Rain / evidence model
 
 Authority split:
@@ -224,6 +233,58 @@ Planned first-class entities:
 - per-zone reason/explanation
 - per-zone moisture band
 - per-zone catch-up candidate / decision state
+
+### Operator UI thesis
+
+The operator surface should answer a small number of questions quickly instead
+of exposing every entity equally.
+
+Primary operator questions:
+
+1. Are we watering, skipping, or waiting right now?
+2. Do we owe a catch-up or top-up decision because conditions have diverged
+   from schedule intent?
+3. Is measured soil moisture drifting enough from Rachio's estimate that we
+   should write moisture back into Rachio?
+4. Is a flow alert still a real issue, or has calibration shown it was a false
+   alarm?
+
+Frontend-skill direction:
+
+- visual thesis: quiet control-room utility with one dominant review rail
+- content plan: posture first, then decision, then evidence, then schedule
+  detail
+- interaction thesis: first viewport answers whether operator action is needed,
+  and healthy review bands collapse by default
+
+The dashboard should stay simple enough that:
+
+- first viewport = posture and decisions
+- second layer = evidence
+- lower layer = full schedule detail
+
+It should not feel like a generic card wall or a zone spreadsheet first.
+
+For moisture specifically:
+
+- first viewport should only surface moisture when drift has become actionable
+- the main moisture section should answer whether measured soil moisture is far
+  enough from Rachio's posture to justify a write-back
+- zone detail should only show mapped sensor, current band, and a short posture
+  note
+- conservative watch zones should remain visibly non-autonomous
+
+### Alerting and action posture
+
+The dashboard and notification model should follow the same priority order:
+
+1. flow alert review that still needs a real operator decision
+2. catch-up or missed-run decisions that would otherwise be lost
+3. moisture-estimate drift when write-back is enabled or explicitly reviewed
+
+Heatwave top-up should be treated as a future extension of the same
+`catch-up / top-up outlook` surface, not as a separate always-on automation
+concept in the initial public product.
 
 ### Services
 
