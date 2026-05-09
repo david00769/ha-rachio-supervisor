@@ -47,14 +47,19 @@ first real runtime milestones:
   options instead of guessing by name overlap at runtime
 - the write path now prefers a stable `schedule_entity_id` target and records
   the last manual moisture-write result as supervisor state
+- the site-level entity model now exposes which schedules are ready for manual
+  moisture write-back through `Ready moisture writes` and `Moisture write queue`
 - schedule-level sensors now expose:
   - status
   - reason
   - policy
   - moisture
+  - write-back
   - catch-up candidate
 - site-level diagnostics now also expose:
   - last moisture write
+  - ready moisture writes
+  - moisture write queue
 
 The deeper irrigation logic is still pending:
 

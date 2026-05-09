@@ -104,6 +104,12 @@
       },
       "last_moisture_write": {
         "name": "Last moisture write"
+      },
+      "ready_moisture_write_count": {
+        "name": "Ready moisture writes"
+      },
+      "moisture_write_queue": {
+        "name": "Moisture write queue"
       }
     }
   }

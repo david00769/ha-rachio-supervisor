@@ -97,6 +97,18 @@ DESCRIPTIONS = (
         entity_category=EntityCategory.DIAGNOSTIC,
         value_fn=lambda data: data.last_moisture_write_status,
     ),
+    RachioSupervisorSensorDescription(
+        key="ready_moisture_write_count",
+        translation_key="ready_moisture_write_count",
+        entity_category=EntityCategory.DIAGNOSTIC,
+        value_fn=lambda data: str(data.ready_moisture_write_count),
+    ),
+    RachioSupervisorSensorDescription(
+        key="moisture_write_queue",
+        translation_key="moisture_write_queue",
+        entity_category=EntityCategory.DIAGNOSTIC,
+        value_fn=lambda data: data.moisture_write_queue,
+    ),
 )
 
 
@@ -116,6 +128,7 @@ async def async_setup_entry(
             ("reason", "Reason"),
             ("policy_mode", "Policy"),
             ("moisture_band", "Moisture"),
+            ("moisture_write_back_ready", "Write-back"),
             ("catch_up_candidate", "Catch-up candidate"),
         )
     )
@@ -192,6 +205,16 @@ class RachioSupervisorSensor(RachioSupervisorEntity, SensorEntity):
                 "last_moisture_write_at": data.last_moisture_write_at,
                 "last_moisture_write_schedule": data.last_moisture_write_schedule,
                 "last_moisture_write_value": data.last_moisture_write_value,
+            }
+        if self.entity_description.key == "ready_moisture_write_count":
+            return {
+                "moisture_write_queue": data.moisture_write_queue,
+                "write_back_mode_enabled": data.action_posture.endswith("write_back_available"),
+            }
+        if self.entity_description.key == "moisture_write_queue":
+            return {
+                "ready_moisture_write_count": data.ready_moisture_write_count,
+                "write_back_mode_enabled": data.action_posture.endswith("write_back_available"),
             }
         return None
 

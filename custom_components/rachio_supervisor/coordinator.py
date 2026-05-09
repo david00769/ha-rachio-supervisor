@@ -127,6 +127,8 @@ class SupervisorSnapshot:
     webhook_health: str
     webhook_url: str | None
     webhook_external_id: str | None
+    ready_moisture_write_count: int
+    moisture_write_queue: str
     last_moisture_write_status: str
     last_moisture_write_at: str | None
     last_moisture_write_schedule: str | None
@@ -756,6 +758,20 @@ class RachioSupervisorCoordinator(DataUpdateCoordinator[SupervisorSnapshot]):
                 if webhook_health != "registered" and health == "healthy":
                     health = "degraded"
 
+        ready_moisture_writes = [
+            schedule
+            for schedule in schedule_snapshots
+            if schedule.moisture_write_back_ready == "ready"
+            and schedule.moisture_band in {"dry", "target", "wet"}
+            and schedule.moisture_value is not None
+        ]
+        ready_moisture_write_count = len(ready_moisture_writes)
+        moisture_write_queue = (
+            ", ".join(schedule.name for schedule in ready_moisture_writes[:5])
+            if ready_moisture_writes
+            else "none"
+        )
+
         return SupervisorSnapshot(
             health=health,
             mode=mode,
@@ -788,6 +804,8 @@ class RachioSupervisorCoordinator(DataUpdateCoordinator[SupervisorSnapshot]):
             webhook_health=webhook_health,
             webhook_url=webhook_url,
             webhook_external_id=webhook_external_id,
+            ready_moisture_write_count=ready_moisture_write_count,
+            moisture_write_queue=moisture_write_queue,
             last_moisture_write_status=self._last_moisture_write_status,
             last_moisture_write_at=self._last_moisture_write_at,
             last_moisture_write_schedule=self._last_moisture_write_schedule,
