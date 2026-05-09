@@ -12,14 +12,19 @@
           "moisture_sensor_entities": "Candidate moisture sensors",
           "zone_count": "Zone count",
           "observe_first": "Start in observe-first mode",
-          "allow_moisture_write_back": "Allow moisture write-back mode"
+          "allow_moisture_write_back": "Allow moisture write-back mode",
+          "enable_persistent_notifications": "Enable persistent notifications",
+          "safe_window_end_hour": "Safe window end hour",
+          "health_reconcile_hour": "Daily healthy reconcile hour",
+          "health_reconcile_minute": "Daily healthy reconcile minute"
         }
       },
       "policy": {
         "title": "Schedule policy",
         "description": "Choose which discovered Rachio schedules are allowed automatic catch-up. All others stay observe-only.",
         "data": {
-          "auto_catch_up_schedule_entities": "Automatic catch-up schedules"
+          "auto_catch_up_schedule_entities": "Automatic catch-up schedules",
+          "auto_missed_run_schedule_entities": "Missed-run recovery schedules"
         }
       },
       "moisture_map": {
@@ -42,14 +47,19 @@
           "moisture_sensor_entities": "Candidate moisture sensors",
           "zone_count": "Zone count",
           "observe_first": "Start in observe-first mode",
-          "allow_moisture_write_back": "Allow moisture write-back mode"
+          "allow_moisture_write_back": "Allow moisture write-back mode",
+          "enable_persistent_notifications": "Enable persistent notifications",
+          "safe_window_end_hour": "Safe window end hour",
+          "health_reconcile_hour": "Daily healthy reconcile hour",
+          "health_reconcile_minute": "Daily healthy reconcile minute"
         }
       },
       "policy": {
         "title": "Schedule policy",
         "description": "Choose which discovered Rachio schedules are allowed automatic catch-up. All others stay observe-only.",
         "data": {
-          "auto_catch_up_schedule_entities": "Automatic catch-up schedules"
+          "auto_catch_up_schedule_entities": "Automatic catch-up schedules",
+          "auto_missed_run_schedule_entities": "Missed-run recovery schedules"
         }
       },
       "moisture_map": {
@@ -72,6 +82,9 @@
       "webhook_health": {
         "name": "Webhook health"
       },
+      "supervisor_mode": {
+        "name": "Supervisor mode"
+      },
       "mode": {
         "name": "Operating mode"
       },
@@ -87,6 +100,12 @@
       "actual_rain_24h": {
         "name": "Actual rain, 24h"
       },
+      "observed_rain_24h": {
+        "name": "Observed rain, 24h"
+      },
+      "last_event": {
+        "name": "Last event"
+      },
       "last_run": {
         "name": "Last run"
       },
@@ -98,6 +117,9 @@
       },
       "configured_zone_count": {
         "name": "Configured zones"
+      },
+      "last_reconciliation": {
+        "name": "Last reconciliation"
       },
       "last_refresh": {
         "name": "Last refresh"
@@ -128,6 +150,12 @@
       },
       "acknowledged_recommendation_queue": {
         "name": "Acknowledged recommendation queue"
+      },
+      "catch_up_evidence": {
+        "name": "Catch-up evidence"
+      },
+      "last_catch_up_decision": {
+        "name": "Last catch-up decision"
       }
     }
   }

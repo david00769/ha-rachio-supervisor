@@ -37,6 +37,12 @@ DESCRIPTIONS = (
         value_fn=lambda data: data.webhook_health,
     ),
     RachioSupervisorSensorDescription(
+        key="supervisor_mode",
+        translation_key="supervisor_mode",
+        entity_category=EntityCategory.DIAGNOSTIC,
+        value_fn=lambda data: data.supervisor_mode,
+    ),
+    RachioSupervisorSensorDescription(
         key="mode",
         translation_key="mode",
         entity_category=EntityCategory.DIAGNOSTIC,
@@ -66,6 +72,16 @@ DESCRIPTIONS = (
         value_fn=lambda data: data.actual_rain_value,
     ),
     RachioSupervisorSensorDescription(
+        key="observed_rain_24h",
+        translation_key="observed_rain_24h",
+        value_fn=lambda data: data.observed_rain_24h,
+    ),
+    RachioSupervisorSensorDescription(
+        key="last_event",
+        translation_key="last_event",
+        value_fn=lambda data: data.last_event_summary,
+    ),
+    RachioSupervisorSensorDescription(
         key="last_run",
         translation_key="last_run",
         value_fn=lambda data: data.last_run_summary,
@@ -84,6 +100,12 @@ DESCRIPTIONS = (
         key="configured_zone_count",
         translation_key="configured_zone_count",
         value_fn=lambda data: str(data.configured_zone_count),
+    ),
+    RachioSupervisorSensorDescription(
+        key="last_reconciliation",
+        translation_key="last_reconciliation",
+        entity_category=EntityCategory.DIAGNOSTIC,
+        value_fn=lambda data: data.last_reconciliation or "never",
     ),
     RachioSupervisorSensorDescription(
         key="last_refresh",
@@ -145,6 +167,18 @@ DESCRIPTIONS = (
         entity_category=EntityCategory.DIAGNOSTIC,
         value_fn=lambda data: data.acknowledged_recommendation_queue,
     ),
+    RachioSupervisorSensorDescription(
+        key="catch_up_evidence",
+        translation_key="catch_up_evidence",
+        entity_category=EntityCategory.DIAGNOSTIC,
+        value_fn=lambda data: data.catch_up_evidence_status,
+    ),
+    RachioSupervisorSensorDescription(
+        key="last_catch_up_decision",
+        translation_key="last_catch_up_decision",
+        entity_category=EntityCategory.DIAGNOSTIC,
+        value_fn=lambda data: data.last_catch_up_decision,
+    ),
 )
 
 
@@ -198,6 +232,8 @@ class RachioSupervisorSensor(RachioSupervisorEntity, SensorEntity):
         data = self.coordinator.data
         if self.entity_description.key == "health":
             return {
+                "supervisor_mode": data.supervisor_mode,
+                "supervisor_reason": data.supervisor_reason,
                 "linked_entry_title": data.linked_entry_title,
                 "linked_entry_state": data.linked_entry_state,
                 "connectivity": data.connectivity,
@@ -215,12 +251,33 @@ class RachioSupervisorSensor(RachioSupervisorEntity, SensorEntity):
                 "webhook_url": data.webhook_url,
                 "webhook_external_id": data.webhook_external_id,
                 "linked_entry_state": data.linked_entry_state,
+                "supervisor_reason": data.supervisor_reason,
+            }
+        if self.entity_description.key == "supervisor_mode":
+            return {
+                "supervisor_reason": data.supervisor_reason,
+                "last_reconciliation": data.last_reconciliation,
             }
         if self.entity_description.key == "actual_rain_24h":
             return {
                 "unit_of_measurement": data.actual_rain_unit,
                 "status": data.rain_actuals_status,
                 "source_entity": data.rain_actuals_entity,
+            }
+        if self.entity_description.key == "observed_rain_24h":
+            attrs = {
+                "unit_of_measurement": "mm",
+                "status": data.observed_rain_status,
+                "source": "Rachio WEATHER_INTELLIGENCE skip event text",
+                "aggregation": "maximum observed_mm from skip events in the last 24h",
+            }
+            if data.observed_rain_best_event:
+                attrs.update(data.observed_rain_best_event)
+            return attrs
+        if self.entity_description.key == "last_event":
+            return {
+                "last_event_at": data.last_event_at,
+                "controller_name": data.controller_name,
             }
         if self.entity_description.key == "last_run":
             return {
@@ -237,6 +294,11 @@ class RachioSupervisorSensor(RachioSupervisorEntity, SensorEntity):
                 "expected_zone_count": data.zone_count,
                 "discovered_schedule_count": data.active_schedule_count,
                 "discovered_entities": data.discovered_entities,
+            }
+        if self.entity_description.key == "last_reconciliation":
+            return {
+                "supervisor_mode": data.supervisor_mode,
+                "supervisor_reason": data.supervisor_reason,
             }
         if self.entity_description.key == "last_moisture_write":
             return {
@@ -283,6 +345,22 @@ class RachioSupervisorSensor(RachioSupervisorEntity, SensorEntity):
             return {
                 "acknowledged_recommendation_count": data.acknowledged_recommendation_count,
                 "review_acknowledgements_persisted": False,
+            }
+        if self.entity_description.key == "catch_up_evidence":
+            return {
+                "reason": data.catch_up_evidence_reason,
+                "schedule_name": data.catch_up_schedule_name,
+                "runtime_minutes": data.catch_up_runtime_minutes,
+                "summary": data.catch_up_summary,
+                "decision_at": data.catch_up_decision_at,
+            }
+        if self.entity_description.key == "last_catch_up_decision":
+            return {
+                "reason": data.catch_up_evidence_reason,
+                "schedule_name": data.catch_up_schedule_name,
+                "runtime_minutes": data.catch_up_runtime_minutes,
+                "summary": data.catch_up_summary,
+                "decision_at": data.catch_up_decision_at,
             }
         return None
 
@@ -340,6 +418,7 @@ class RachioSupervisorScheduleSensor(RachioSupervisorEntity, SensorEntity):
             "recommended_action": schedule.recommended_action,
             "review_state": schedule.review_state,
             "review_acknowledgements_persisted": False,
+            "runtime_minutes": schedule.runtime_minutes,
             "last_run_at": schedule.last_run_at,
             "last_skip_at": schedule.last_skip_at,
             "observed_mm": schedule.observed_mm,

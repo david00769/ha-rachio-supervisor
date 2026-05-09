@@ -13,18 +13,28 @@ from homeassistant.util import slugify
 from .const import (
     CONF_ALLOW_MOISTURE_WRITE_BACK,
     CONF_AUTO_CATCH_UP_SCHEDULES,
+    CONF_AUTO_MISSED_RUN_SCHEDULES,
+    CONF_ENABLE_PERSISTENT_NOTIFICATIONS,
+    CONF_HEALTH_RECONCILE_HOUR,
+    CONF_HEALTH_RECONCILE_MINUTE,
     CONF_MOISTURE_SENSOR_ENTITIES,
     CONF_OBSERVE_FIRST,
     CONF_RACHIO_CONFIG_ENTRY_ID,
     CONF_RAIN_ACTUALS_ENTITY,
+    CONF_SAFE_WINDOW_END_HOUR,
     CONF_SCHEDULE_MOISTURE_MAP,
     CONF_SITE_NAME,
     CONF_ZONE_COUNT,
     DEFAULT_ALLOW_MOISTURE_WRITE_BACK,
     DEFAULT_AUTO_CATCH_UP_SCHEDULES,
+    DEFAULT_AUTO_MISSED_RUN_SCHEDULES,
+    DEFAULT_ENABLE_PERSISTENT_NOTIFICATIONS,
+    DEFAULT_HEALTH_RECONCILE_HOUR,
+    DEFAULT_HEALTH_RECONCILE_MINUTE,
     DEFAULT_MOISTURE_SENSOR_ENTITIES,
     DEFAULT_SCHEDULE_MOISTURE_MAP,
     DEFAULT_OBSERVE_FIRST,
+    DEFAULT_SAFE_WINDOW_END_HOUR,
     DEFAULT_ZONE_COUNT,
     DOMAIN,
 )
@@ -86,6 +96,40 @@ def _flow_schema(
                 ),
             ): selector.BooleanSelector(),
             vol.Required(
+                CONF_ENABLE_PERSISTENT_NOTIFICATIONS,
+                default=defaults.get(
+                    CONF_ENABLE_PERSISTENT_NOTIFICATIONS,
+                    DEFAULT_ENABLE_PERSISTENT_NOTIFICATIONS,
+                ),
+            ): selector.BooleanSelector(),
+            vol.Required(
+                CONF_SAFE_WINDOW_END_HOUR,
+                default=defaults.get(
+                    CONF_SAFE_WINDOW_END_HOUR,
+                    DEFAULT_SAFE_WINDOW_END_HOUR,
+                ),
+            ): selector.NumberSelector(
+                selector.NumberSelectorConfig(min=0, max=23, step=1, mode=selector.NumberSelectorMode.BOX)
+            ),
+            vol.Required(
+                CONF_HEALTH_RECONCILE_HOUR,
+                default=defaults.get(
+                    CONF_HEALTH_RECONCILE_HOUR,
+                    DEFAULT_HEALTH_RECONCILE_HOUR,
+                ),
+            ): selector.NumberSelector(
+                selector.NumberSelectorConfig(min=0, max=23, step=1, mode=selector.NumberSelectorMode.BOX)
+            ),
+            vol.Required(
+                CONF_HEALTH_RECONCILE_MINUTE,
+                default=defaults.get(
+                    CONF_HEALTH_RECONCILE_MINUTE,
+                    DEFAULT_HEALTH_RECONCILE_MINUTE,
+                ),
+            ): selector.NumberSelector(
+                selector.NumberSelectorConfig(min=0, max=59, step=1, mode=selector.NumberSelectorMode.BOX)
+            ),
+            vol.Required(
                 CONF_MOISTURE_SENSOR_ENTITIES,
                 default=defaults.get(
                     CONF_MOISTURE_SENSOR_ENTITIES,
@@ -111,6 +155,22 @@ def _policy_schema(
                 default=defaults.get(
                     CONF_AUTO_CATCH_UP_SCHEDULES,
                     DEFAULT_AUTO_CATCH_UP_SCHEDULES,
+                ),
+            ): selector.SelectSelector(
+                selector.SelectSelectorConfig(
+                    options=[
+                        selector.SelectOptionDict(value=value, label=label)
+                        for value, label in schedule_options
+                    ],
+                    multiple=True,
+                    mode=selector.SelectSelectorMode.DROPDOWN,
+                )
+            ),
+            vol.Required(
+                CONF_AUTO_MISSED_RUN_SCHEDULES,
+                default=defaults.get(
+                    CONF_AUTO_MISSED_RUN_SCHEDULES,
+                    DEFAULT_AUTO_MISSED_RUN_SCHEDULES,
                 ),
             ): selector.SelectSelector(
                 selector.SelectSelectorConfig(
@@ -164,7 +224,11 @@ class RachioSupervisorConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 CONF_AUTO_CATCH_UP_SCHEDULES: user_input.get(
                     CONF_AUTO_CATCH_UP_SCHEDULES,
                     [],
-                )
+                ),
+                CONF_AUTO_MISSED_RUN_SCHEDULES: user_input.get(
+                    CONF_AUTO_MISSED_RUN_SCHEDULES,
+                    [],
+                ),
             }
             self._moisture_mapping = {}
             self._mapping_index = 0
@@ -293,7 +357,11 @@ class RachioSupervisorOptionsFlow(config_entries.OptionsFlow):
                 CONF_AUTO_CATCH_UP_SCHEDULES: user_input.get(
                     CONF_AUTO_CATCH_UP_SCHEDULES,
                     [],
-                )
+                ),
+                CONF_AUTO_MISSED_RUN_SCHEDULES: user_input.get(
+                    CONF_AUTO_MISSED_RUN_SCHEDULES,
+                    [],
+                ),
             }
             self._moisture_mapping = {}
             self._mapping_index = 0

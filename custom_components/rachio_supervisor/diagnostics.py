@@ -24,8 +24,8 @@ async def async_get_config_entry_diagnostics(
         "entry_options": entry.options,
         "snapshot": asdict(coordinator.data),
         "notes": [
-            "This diagnostics payload reflects the first runtime milestone.",
-            "It links to an existing Home Assistant Rachio entry and publishes site-level evidence.",
-            "Full Rachio event history, catch-up policy, and moisture write-back flows are still pending.",
+            "This diagnostics payload reflects the current public runtime milestone.",
+            "It links to an existing Home Assistant Rachio entry and publishes site-level evidence plus supervision state.",
+            "Automatic irrigation behavior remains intentionally narrow and opt-in.",
         ],
     }

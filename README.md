@@ -56,6 +56,12 @@ first real runtime milestones:
   review versus already acknowledged in the current runtime session through
   `Active recommendations`, `Active recommendation queue`, `Acknowledged
   recommendations`, and `Acknowledged recommendation queue`
+- the integration now also exposes parity-oriented supervisor surfaces for
+  `last event`, `last reconciliation`, `observed rain 24h`, `catch-up
+  evidence`, `last catch-up decision`, and `supervisor mode`
+- schedule policy now distinguishes between:
+  - automatic catch-up after weather skip
+  - automatic missed-run recovery
 - schedule-level sensors now expose:
   - status
   - reason
@@ -78,9 +84,9 @@ first real runtime milestones:
 
 The deeper irrigation logic is still pending:
 
-- richer catch-up decision engine
-- moisture write-back flows
+- richer missed-run recurrence handling beyond the current conservative model
 - deeper webhook-quality reasoning beyond registration health
+- more polished dashboard/action workflow for operator execution
 
 ## Product stance
 
@@ -90,6 +96,8 @@ The deeper irrigation logic is still pending:
 - automatic behavior is `per-zone opt-in`.
 - moisture support is `generic Home Assistant sensor input`.
 - actual rainfall comes from `user-selected Home Assistant rainfall entities`.
+- Rachio-observed rain from skip events is also surfaced separately because it
+  is often the most useful parity signal for irrigation review.
 
 ## Why this exists
 
@@ -117,6 +125,7 @@ It is aimed at the operational gap between:
 - Rachio-specific status and audit entities
 - webhook/API freshness visibility
 - actual-rain aware catch-up reasoning
+- Rachio-observed rain review
 - optional moisture write-back to Rachio
 - recommended irrigation workspace dashboard
 
@@ -128,13 +137,19 @@ Today the custom integration provides a narrow but real runtime:
 - actual rainfall is mapped from a selected sensor entity
 - the coordinator inspects the linked Rachio entry and Rachio public API and publishes:
   - health
+  - supervisor mode
   - webhook health
   - linked Rachio entry
   - operating mode
   - action posture
   - actual rain, 24h
+  - observed rain, 24h
+  - last event
   - last run
   - last skip
+  - last reconciliation
+  - catch-up evidence
+  - last catch-up decision
   - active-zone count
   - configured-zone count
   - last refresh
@@ -155,12 +170,13 @@ Today the custom integration provides a narrow but real runtime:
   - catch-up candidate
 
 This milestone is still intentionally narrow. It does not yet execute automatic
-catch-up or broad autonomous moisture write-back. Moisture support currently
-means candidate sensor selection, explicit per-schedule mapping, coarse
-moisture-band state, a runtime review queue, plus manual write-back and review
-acknowledgement services. Review acknowledgements are not persisted yet; they
-reset when the integration reloads. It still does not trigger watering on its
-own.
+moisture-assisted watering. Moisture support currently means candidate sensor
+selection, explicit per-schedule mapping, coarse moisture-band state, a runtime
+review queue, plus manual write-back and review acknowledgement services.
+Review acknowledgements are not persisted yet; they reset when the integration
+reloads. Automatic watering remains opt-in and narrow: weather-skip catch-up
+can only execute for explicitly selected schedules, and missed-run recovery is
+still conservative.
 
 ## HACS status
 
