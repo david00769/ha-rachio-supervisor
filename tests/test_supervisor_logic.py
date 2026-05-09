@@ -857,6 +857,26 @@ class ConfigFlowBehaviorTests(unittest.TestCase):
             {"switch.schedule_pots": "sensor.moisture_pots"},
         )
 
+    def test_options_flow_accepts_normalized_schedule_label_submission(self) -> None:
+        entry = SimpleNamespace(data={"site_name": "Sugarloaf"}, options={})
+        flow = config_flow.RachioSupervisorOptionsFlow(entry)
+        flow.hass = self._hass()
+        flow._basic_input = {"moisture_sensor_entities": ["sensor.moisture_boxwoods"]}
+        flow._policy_input = {}
+        flow._schedule_options = [("switch.schedule_boxwoods", "Boxwood + Liriope Schedule")]
+
+        result = asyncio.run(
+            flow.async_step_moisture_map(
+                {"Boxwood & Liriope Schedule": "sensor.moisture_boxwoods"}
+            )
+        )
+
+        self.assertEqual(result["type"], "create_entry")
+        self.assertEqual(
+            result["data"]["schedule_moisture_map"],
+            {"switch.schedule_boxwoods": "sensor.moisture_boxwoods"},
+        )
+
     def test_options_flow_skips_mapping_when_no_sensors_selected(self) -> None:
         entry = SimpleNamespace(data={"site_name": "Sugarloaf"}, options={})
         flow = config_flow.RachioSupervisorOptionsFlow(entry)

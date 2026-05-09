@@ -54,6 +54,27 @@ def _moisture_field_key(schedule_label: str) -> str:
     return schedule_label
 
 
+def _submitted_field_value(
+    user_input: dict[str, Any],
+    field_key: str,
+    default: str = UNMAPPED_SENTINEL,
+) -> str:
+    """Return the submitted value even if HA normalizes the visible field label.
+
+    Some Home Assistant config-flow surfaces mutate the visible label enough
+    that the posted payload key no longer matches the schema key exactly. When a
+    moisture-map step only contains one field, accept that sole submitted value
+    instead of silently treating the selection as unmapped.
+    """
+    if field_key in user_input:
+        return str(user_input[field_key])
+
+    if len(user_input) == 1:
+        return str(next(iter(user_input.values())))
+
+    return default
+
+
 def _flow_schema(
     rachio_options: list[tuple[str, str]],
     defaults: dict[str, Any] | None = None,
@@ -328,7 +349,7 @@ class RachioSupervisorConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         schedule_entity_id, schedule_label = self._schedule_options[self._mapping_index]
         field_key = _moisture_field_key(schedule_label)
         if user_input is not None:
-            selected = str(user_input.get(field_key, UNMAPPED_SENTINEL))
+            selected = _submitted_field_value(user_input, field_key)
             if selected != UNMAPPED_SENTINEL:
                 self._moisture_mapping[schedule_entity_id] = selected
             self._mapping_index += 1
@@ -467,7 +488,7 @@ class RachioSupervisorOptionsFlow(config_entries.OptionsFlow):
         schedule_entity_id, schedule_label = self._schedule_options[self._mapping_index]
         field_key = _moisture_field_key(schedule_label)
         if user_input is not None:
-            selected = str(user_input.get(field_key, UNMAPPED_SENTINEL))
+            selected = _submitted_field_value(user_input, field_key)
             if selected != UNMAPPED_SENTINEL:
                 self._moisture_mapping[schedule_entity_id] = selected
             self._mapping_index += 1
