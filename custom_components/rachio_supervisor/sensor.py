@@ -109,6 +109,18 @@ DESCRIPTIONS = (
         entity_category=EntityCategory.DIAGNOSTIC,
         value_fn=lambda data: data.moisture_write_queue,
     ),
+    RachioSupervisorSensorDescription(
+        key="recommended_moisture_write_count",
+        translation_key="recommended_moisture_write_count",
+        entity_category=EntityCategory.DIAGNOSTIC,
+        value_fn=lambda data: str(data.recommended_moisture_write_count),
+    ),
+    RachioSupervisorSensorDescription(
+        key="recommended_moisture_write_queue",
+        translation_key="recommended_moisture_write_queue",
+        entity_category=EntityCategory.DIAGNOSTIC,
+        value_fn=lambda data: data.recommended_moisture_write_queue,
+    ),
 )
 
 
@@ -129,6 +141,7 @@ async def async_setup_entry(
             ("policy_mode", "Policy"),
             ("moisture_band", "Moisture"),
             ("moisture_write_back_ready", "Write-back"),
+            ("recommended_action", "Recommendation"),
             ("catch_up_candidate", "Catch-up candidate"),
         )
     )
@@ -216,6 +229,16 @@ class RachioSupervisorSensor(RachioSupervisorEntity, SensorEntity):
                 "ready_moisture_write_count": data.ready_moisture_write_count,
                 "write_back_mode_enabled": data.action_posture.endswith("write_back_available"),
             }
+        if self.entity_description.key == "recommended_moisture_write_count":
+            return {
+                "recommended_moisture_write_queue": data.recommended_moisture_write_queue,
+                "write_back_mode_enabled": data.action_posture.endswith("write_back_available"),
+            }
+        if self.entity_description.key == "recommended_moisture_write_queue":
+            return {
+                "recommended_moisture_write_count": data.recommended_moisture_write_count,
+                "write_back_mode_enabled": data.action_posture.endswith("write_back_available"),
+            }
         return None
 
 
@@ -269,6 +292,7 @@ class RachioSupervisorScheduleSensor(RachioSupervisorEntity, SensorEntity):
             "moisture_value": schedule.moisture_value,
             "moisture_status": schedule.moisture_status,
             "moisture_write_back_ready": schedule.moisture_write_back_ready,
+            "recommended_action": schedule.recommended_action,
             "last_run_at": schedule.last_run_at,
             "last_skip_at": schedule.last_skip_at,
             "observed_mm": schedule.observed_mm,

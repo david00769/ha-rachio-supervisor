@@ -110,6 +110,12 @@
       },
       "moisture_write_queue": {
         "name": "Moisture write queue"
+      },
+      "recommended_moisture_write_count": {
+        "name": "Recommended moisture writes"
+      },
+      "recommended_moisture_write_queue": {
+        "name": "Recommended moisture queue"
       }
     }
   }

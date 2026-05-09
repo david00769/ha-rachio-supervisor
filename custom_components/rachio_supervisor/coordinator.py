@@ -66,6 +66,7 @@ class ScheduleSnapshot:
     moisture_band: str
     moisture_status: str
     moisture_write_back_ready: str
+    recommended_action: str
     last_run_at: str | None
     last_skip_at: str | None
     summary: str
@@ -129,6 +130,8 @@ class SupervisorSnapshot:
     webhook_external_id: str | None
     ready_moisture_write_count: int
     moisture_write_queue: str
+    recommended_moisture_write_count: int
+    recommended_moisture_write_queue: str
     last_moisture_write_status: str
     last_moisture_write_at: str | None
     last_moisture_write_schedule: str | None
@@ -341,6 +344,18 @@ def apply_moisture_mapping(
             )
         else:
             moisture_status = "Mapped moisture sensor resolved explicitly."
+        if schedule.moisture_write_back_ready != "ready":
+            recommended_action = "resolve_write_back"
+        elif moisture_entity_id is None:
+            recommended_action = "map_moisture_sensor"
+        elif moisture_band in {"unavailable", "non_numeric", "missing"}:
+            recommended_action = "repair_moisture_sensor"
+        elif schedule.policy_mode == "auto_catch_up_enabled" and schedule.catch_up_candidate == "eligible_auto":
+            recommended_action = "review_auto_catch_up"
+        elif moisture_band == "dry":
+            recommended_action = "write_moisture_now"
+        else:
+            recommended_action = "none"
         hydrated.append(
             ScheduleSnapshot(
                 rule_id=schedule.rule_id,
@@ -358,6 +373,7 @@ def apply_moisture_mapping(
                 moisture_band=moisture_band,
                 moisture_status=moisture_status,
                 moisture_write_back_ready=schedule.moisture_write_back_ready,
+                recommended_action=recommended_action,
                 last_run_at=schedule.last_run_at,
                 last_skip_at=schedule.last_skip_at,
                 summary=schedule.summary,
@@ -538,6 +554,7 @@ def build_rachio_evidence(
                 moisture_band="unmapped",
                 moisture_status="Moisture mapping not yet evaluated.",
                 moisture_write_back_ready=moisture_write_back_ready,
+                recommended_action="pending_moisture_eval",
                 last_run_at=event_dt(run_event).isoformat() if run_event else None,
                 last_skip_at=event_dt(skip_event).isoformat() if skip_event else None,
                 summary=reason,
@@ -771,6 +788,17 @@ class RachioSupervisorCoordinator(DataUpdateCoordinator[SupervisorSnapshot]):
             if ready_moisture_writes
             else "none"
         )
+        recommended_moisture_writes = [
+            schedule
+            for schedule in schedule_snapshots
+            if schedule.recommended_action == "write_moisture_now"
+        ]
+        recommended_moisture_write_count = len(recommended_moisture_writes)
+        recommended_moisture_write_queue = (
+            ", ".join(schedule.name for schedule in recommended_moisture_writes[:5])
+            if recommended_moisture_writes
+            else "none"
+        )
 
         return SupervisorSnapshot(
             health=health,
@@ -806,6 +834,8 @@ class RachioSupervisorCoordinator(DataUpdateCoordinator[SupervisorSnapshot]):
             webhook_external_id=webhook_external_id,
             ready_moisture_write_count=ready_moisture_write_count,
             moisture_write_queue=moisture_write_queue,
+            recommended_moisture_write_count=recommended_moisture_write_count,
+            recommended_moisture_write_queue=recommended_moisture_write_queue,
             last_moisture_write_status=self._last_moisture_write_status,
             last_moisture_write_at=self._last_moisture_write_at,
             last_moisture_write_schedule=self._last_moisture_write_schedule,

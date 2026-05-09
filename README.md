@@ -49,17 +49,23 @@ first real runtime milestones:
   the last manual moisture-write result as supervisor state
 - the site-level entity model now exposes which schedules are ready for manual
   moisture write-back through `Ready moisture writes` and `Moisture write queue`
+- the site-level entity model now also exposes which schedules are actually
+  recommended for manual moisture write-back through `Recommended moisture
+  writes` and `Recommended moisture queue`
 - schedule-level sensors now expose:
   - status
   - reason
   - policy
   - moisture
   - write-back
+  - recommendation
   - catch-up candidate
 - site-level diagnostics now also expose:
   - last moisture write
   - ready moisture writes
   - moisture write queue
+  - recommended moisture writes
+  - recommended moisture queue
 
 The deeper irrigation logic is still pending:
 
@@ -123,11 +129,15 @@ Today the custom integration provides a narrow but real runtime:
   - active-zone count
   - configured-zone count
   - last refresh
+  - recommended moisture writes
+  - recommended moisture queue
 - schedule-level sensors for each active Rachio schedule:
   - status
   - reason
   - policy
   - moisture
+  - write-back
+  - recommendation
   - catch-up candidate
 
 This milestone is still intentionally narrow. It does not yet execute automatic

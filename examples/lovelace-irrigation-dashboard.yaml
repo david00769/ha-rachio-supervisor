@@ -12,35 +12,59 @@ sections:
         entity: sensor.rachio_supervisor_health
         name: Supervisor health
       - type: tile
+        entity: sensor.rachio_supervisor_webhook_health
+        name: Webhook health
+      - type: tile
         entity: sensor.rachio_supervisor_last_refresh
         name: Last refresh
       - type: tile
-        entity: sensor.rachio_supervisor_rain_actuals_source
-        name: Rain actuals source
-      - type: tile
-        entity: sensor.rachio_supervisor_mode
-        name: Operating mode
+        entity: sensor.rachio_supervisor_actual_rain_24h
+        name: Actual rain, 24h
       - type: tile
         entity: sensor.rachio_supervisor_action_posture
         name: Action posture
+      - type: tile
+        entity: sensor.rachio_supervisor_last_moisture_write
+        name: Last moisture write
   - type: grid
     cards:
       - type: heading
-        heading: Zone review
+        heading: Moisture Recommendations
+      - type: tile
+        entity: sensor.rachio_supervisor_recommended_moisture_write_count
+        name: Recommended moisture writes
+      - type: tile
+        entity: sensor.rachio_supervisor_recommended_moisture_write_queue
+        name: Recommended moisture queue
+      - type: tile
+        entity: sensor.rachio_supervisor_ready_moisture_write_count
+        name: Ready moisture writes
+      - type: tile
+        entity: sensor.rachio_supervisor_moisture_write_queue
+        name: Moisture write queue
+  - type: grid
+    cards:
+      - type: heading
+        heading: Schedule Review
       - type: markdown
         content: >
-          This package is the recommended operator layout target. The full
-          runtime entity model will add per-zone status, reason, moisture band,
-          and catch-up candidate entities once implementation lands.
+          Use one group of schedule sensors per active Rachio schedule. The
+          examples below show the intended pattern. Replace the entity ids with
+          the actual generated schedule sensors for your installation.
       - type: entities
-        title: Expected per-zone entity pattern
+        title: Example schedule entity pattern
         entities:
-          - entity: sensor.rachio_supervisor_zone_1_status
-            name: Zone 1 status
-          - entity: sensor.rachio_supervisor_zone_1_reason
-            name: Zone 1 reason
-          - entity: sensor.rachio_supervisor_zone_1_moisture_band
-            name: Zone 1 moisture band
-          - entity: sensor.rachio_supervisor_zone_1_catch_up_state
-            name: Zone 1 catch-up state
-
+          - entity: sensor.rachio_supervisor_lawn_summer_green_status
+            name: Lawn - Summer Green / Status
+          - entity: sensor.rachio_supervisor_lawn_summer_green_reason
+            name: Lawn - Summer Green / Reason
+          - entity: sensor.rachio_supervisor_lawn_summer_green_policy
+            name: Lawn - Summer Green / Policy
+          - entity: sensor.rachio_supervisor_lawn_summer_green_moisture
+            name: Lawn - Summer Green / Moisture
+          - entity: sensor.rachio_supervisor_lawn_summer_green_write_back
+            name: Lawn - Summer Green / Write-back
+          - entity: sensor.rachio_supervisor_lawn_summer_green_recommendation
+            name: Lawn - Summer Green / Recommendation
+          - entity: sensor.rachio_supervisor_lawn_summer_green_catch_up_candidate
+            name: Lawn - Summer Green / Catch-up candidate
