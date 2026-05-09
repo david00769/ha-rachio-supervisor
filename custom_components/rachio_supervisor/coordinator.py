@@ -706,7 +706,7 @@ def build_rachio_evidence(
 
     controller_id = str(controller["id"])
     controller_name = str(controller.get("name", "Rachio Controller"))
-    now = datetime.now(tz=TZ)
+    now = dt_util.now()
     events = client.list_device_events(
         controller_id,
         start=now - timedelta(hours=EVENT_LOOKBACK_HOURS),
@@ -922,7 +922,7 @@ class RachioSupervisorCoordinator(DataUpdateCoordinator[SupervisorSnapshot]):
     ) -> None:
         """Record the most recent manual moisture write result."""
         self._last_moisture_write_status = status
-        self._last_moisture_write_at = datetime.now(tz=TZ).isoformat()
+        self._last_moisture_write_at = dt_util.now().isoformat()
         self._last_moisture_write_schedule = schedule_name
         self._last_moisture_write_value = moisture_value
 
