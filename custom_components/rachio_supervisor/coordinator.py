@@ -127,6 +127,10 @@ class SupervisorSnapshot:
     webhook_health: str
     webhook_url: str | None
     webhook_external_id: str | None
+    last_moisture_write_status: str
+    last_moisture_write_at: str | None
+    last_moisture_write_schedule: str | None
+    last_moisture_write_value: str | None
     last_refresh: str
     notes: tuple[str, ...]
     discovered_entities: dict[str, object]
@@ -571,6 +575,23 @@ class RachioSupervisorCoordinator(DataUpdateCoordinator[SupervisorSnapshot]):
             update_interval=timedelta(minutes=5),
         )
         self.entry = entry
+        self._last_moisture_write_status = "none"
+        self._last_moisture_write_at: str | None = None
+        self._last_moisture_write_schedule: str | None = None
+        self._last_moisture_write_value: str | None = None
+
+    def record_moisture_write(
+        self,
+        *,
+        status: str,
+        schedule_name: str | None,
+        moisture_value: str | None,
+    ) -> None:
+        """Record the most recent manual moisture write result."""
+        self._last_moisture_write_status = status
+        self._last_moisture_write_at = datetime.now(tz=TZ).isoformat()
+        self._last_moisture_write_schedule = schedule_name
+        self._last_moisture_write_value = moisture_value
 
     async def _async_update_data(self) -> SupervisorSnapshot:
         """Return the current site-level supervision snapshot."""
@@ -767,6 +788,10 @@ class RachioSupervisorCoordinator(DataUpdateCoordinator[SupervisorSnapshot]):
             webhook_health=webhook_health,
             webhook_url=webhook_url,
             webhook_external_id=webhook_external_id,
+            last_moisture_write_status=self._last_moisture_write_status,
+            last_moisture_write_at=self._last_moisture_write_at,
+            last_moisture_write_schedule=self._last_moisture_write_schedule,
+            last_moisture_write_value=self._last_moisture_write_value,
             last_refresh=datetime.now(tz=TZ).isoformat(),
             notes=tuple(notes),
             discovered_entities={

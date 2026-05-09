@@ -9,10 +9,18 @@ write_moisture_now:
   name: Write moisture now
   description: Write the currently mapped moisture value into the resolved Rachio zone for one schedule.
   fields:
+    schedule_entity_id:
+      name: Schedule entity
+      description: Preferred stable target. Use the supervisor schedule entity id when available.
+      required: false
+      selector:
+        entity:
+          integration: rachio_supervisor
+          domain: sensor
     schedule_name:
       name: Schedule name
-      description: Exact Rachio schedule name from the supervisor sensors.
-      required: true
+      description: Fallback target when schedule entity id is not supplied.
+      required: false
       selector:
         text:
     site_name:

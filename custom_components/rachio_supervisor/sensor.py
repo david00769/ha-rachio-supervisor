@@ -91,6 +91,12 @@ DESCRIPTIONS = (
         entity_category=EntityCategory.DIAGNOSTIC,
         value_fn=lambda data: data.last_refresh,
     ),
+    RachioSupervisorSensorDescription(
+        key="last_moisture_write",
+        translation_key="last_moisture_write",
+        entity_category=EntityCategory.DIAGNOSTIC,
+        value_fn=lambda data: data.last_moisture_write_status,
+    ),
 )
 
 
@@ -180,6 +186,12 @@ class RachioSupervisorSensor(RachioSupervisorEntity, SensorEntity):
                 "expected_zone_count": data.zone_count,
                 "discovered_schedule_count": data.active_schedule_count,
                 "discovered_entities": data.discovered_entities,
+            }
+        if self.entity_description.key == "last_moisture_write":
+            return {
+                "last_moisture_write_at": data.last_moisture_write_at,
+                "last_moisture_write_schedule": data.last_moisture_write_schedule,
+                "last_moisture_write_value": data.last_moisture_write_value,
             }
         return None
 

@@ -45,12 +45,16 @@ first real runtime milestones:
   when moisture write-back mode is enabled for that entry
 - moisture support now uses an explicit per-schedule mapping step in config and
   options instead of guessing by name overlap at runtime
+- the write path now prefers a stable `schedule_entity_id` target and records
+  the last manual moisture-write result as supervisor state
 - schedule-level sensors now expose:
   - status
   - reason
   - policy
   - moisture
   - catch-up candidate
+- site-level diagnostics now also expose:
+  - last moisture write
 
 The deeper irrigation logic is still pending:
 

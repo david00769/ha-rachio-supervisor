@@ -101,6 +101,9 @@
       },
       "last_refresh": {
         "name": "Last refresh"
+      },
+      "last_moisture_write": {
+        "name": "Last moisture write"
       }
     }
   }

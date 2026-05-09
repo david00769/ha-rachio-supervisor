@@ -36,7 +36,8 @@ async def _async_handle_evaluate_now(hass: HomeAssistant, call: ServiceCall) -> 
 
 def _find_schedule_target(
     coordinators: dict[str, RachioSupervisorCoordinator],
-    schedule_name: str,
+    schedule_name: str | None,
+    schedule_entity_id: str | None,
     site_name: str | None,
 ) -> tuple[RachioSupervisorCoordinator, ScheduleSnapshot]:
     """Resolve one schedule snapshot across loaded coordinators."""
@@ -45,7 +46,9 @@ def _find_schedule_target(
         if site_name and coordinator.data.site_name != site_name:
             continue
         for schedule in coordinator.data.schedule_snapshots:
-            if schedule.name == schedule_name:
+            if schedule_entity_id and schedule.schedule_entity_id == schedule_entity_id:
+                matches.append((coordinator, schedule))
+            elif schedule_name and schedule.name == schedule_name:
                 matches.append((coordinator, schedule))
     if not matches:
         raise HomeAssistantError("No matching Rachio Supervisor schedule was found.")
@@ -65,33 +68,79 @@ async def _async_handle_write_moisture_now(
     if not coordinators:
         raise HomeAssistantError("No Rachio Supervisor entries are loaded.")
 
-    schedule_name = str(call.data["schedule_name"])
+    schedule_name = (
+        str(call.data["schedule_name"]) if call.data.get("schedule_name") else None
+    )
+    schedule_entity_id = (
+        str(call.data["schedule_entity_id"])
+        if call.data.get("schedule_entity_id")
+        else None
+    )
+    if not schedule_name and not schedule_entity_id:
+        raise HomeAssistantError(
+            "Provide either schedule_entity_id or schedule_name."
+        )
     site_name = call.data.get("site_name")
-    coordinator, schedule = _find_schedule_target(coordinators, schedule_name, site_name)
+    coordinator, schedule = _find_schedule_target(
+        coordinators,
+        schedule_name,
+        schedule_entity_id,
+        site_name,
+    )
 
     data = {**coordinator.entry.data, **coordinator.entry.options}
     if not data.get(CONF_ALLOW_MOISTURE_WRITE_BACK, False):
+        coordinator.record_moisture_write(
+            status="rejected_write_back_disabled",
+            schedule_name=schedule.name,
+            moisture_value=schedule.moisture_value,
+        )
         raise HomeAssistantError(
             "Moisture write-back is not enabled for this Rachio Supervisor entry."
         )
     if not schedule.controller_zone_id:
+        coordinator.record_moisture_write(
+            status="rejected_zone_unresolved",
+            schedule_name=schedule.name,
+            moisture_value=schedule.moisture_value,
+        )
         raise HomeAssistantError("The selected schedule does not resolve to a Rachio zone.")
     if schedule.moisture_value is None:
+        coordinator.record_moisture_write(
+            status="rejected_missing_moisture_value",
+            schedule_name=schedule.name,
+            moisture_value=schedule.moisture_value,
+        )
         raise HomeAssistantError(
             "The selected schedule does not have a usable mapped moisture value."
         )
     try:
         moisture_percent = float(schedule.moisture_value)
     except (TypeError, ValueError) as exc:
+        coordinator.record_moisture_write(
+            status="rejected_non_numeric_moisture_value",
+            schedule_name=schedule.name,
+            moisture_value=schedule.moisture_value,
+        )
         raise HomeAssistantError(
             "The selected schedule does not have a numeric mapped moisture value."
         ) from exc
 
     linked_entry = hass.config_entries.async_get_entry(coordinator.data.rachio_config_entry_id)
     if linked_entry is None:
+        coordinator.record_moisture_write(
+            status="rejected_missing_linked_entry",
+            schedule_name=schedule.name,
+            moisture_value=schedule.moisture_value,
+        )
         raise HomeAssistantError("The linked Home Assistant Rachio entry was not found.")
     api_key = linked_entry.data.get(CONF_API_KEY)
     if not api_key:
+        coordinator.record_moisture_write(
+            status="rejected_missing_api_key",
+            schedule_name=schedule.name,
+            moisture_value=schedule.moisture_value,
+        )
         raise HomeAssistantError("The linked Home Assistant Rachio entry has no API key.")
 
     client = RachioClient(str(api_key))
@@ -99,6 +148,11 @@ async def _async_handle_write_moisture_now(
         client.set_zone_moisture_percent,
         schedule.controller_zone_id,
         max(0.0, min(100.0, moisture_percent)),
+    )
+    coordinator.record_moisture_write(
+        status="written",
+        schedule_name=schedule.name,
+        moisture_value=f"{max(0.0, min(100.0, moisture_percent)):g}",
     )
     await coordinator.async_request_refresh()
 
@@ -121,7 +175,8 @@ def _async_register_services(hass: HomeAssistant) -> Callable[[], None]:
         _async_handle_write_moisture_now,
         schema=vol.Schema(
             {
-                vol.Required("schedule_name"): cv.string,
+                vol.Optional("schedule_name"): cv.string,
+                vol.Optional("schedule_entity_id"): cv.entity_id,
                 vol.Optional("site_name"): cv.string,
             }
         ),
