@@ -251,6 +251,22 @@ class RachioSupervisorConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             for entity_id in self._basic_input.get(CONF_MOISTURE_SENSOR_ENTITIES, [])
             if isinstance(entity_id, str)
         ]
+        if not moisture_candidates:
+            final_input = {
+                **self._basic_input,
+                **self._policy_input,
+                CONF_SCHEDULE_MOISTURE_MAP: DEFAULT_SCHEDULE_MOISTURE_MAP,
+            }
+            unique_id = final_input[CONF_RACHIO_CONFIG_ENTRY_ID].strip() or slugify(
+                final_input[CONF_SITE_NAME]
+            )
+            await self.async_set_unique_id(f"rachio_supervisor::{unique_id}")
+            self._abort_if_unique_id_configured()
+            return self.async_create_entry(
+                title=final_input[CONF_SITE_NAME],
+                data=final_input,
+            )
+
         if not self._schedule_options:
             final_input = {
                 **self._basic_input,
@@ -389,6 +405,16 @@ class RachioSupervisorOptionsFlow(config_entries.OptionsFlow):
             if isinstance(entity_id, str)
         ]
         existing_map = defaults.get(CONF_SCHEDULE_MOISTURE_MAP, DEFAULT_SCHEDULE_MOISTURE_MAP)
+
+        if not moisture_candidates:
+            return self.async_create_entry(
+                title="",
+                data={
+                    **self._basic_input,
+                    **self._policy_input,
+                    CONF_SCHEDULE_MOISTURE_MAP: DEFAULT_SCHEDULE_MOISTURE_MAP,
+                },
+            )
 
         if not self._schedule_options:
             return self.async_create_entry(
