@@ -26,6 +26,7 @@ The current public runtime now provides:
 
 - site-level health and freshness sensors
 - site-level last-run / last-skip sensors
+- site-level last-event / last-reconciliation / observed-rain sensors
 - site-level moisture-write queue and recommendation sensors
 - site-level active-review and acknowledged-review queue sensors
 - per-schedule status / reason / policy entities
@@ -37,3 +38,10 @@ around the shipped entity model, not around a future generic zone abstraction.
 Current review acknowledgement behavior is runtime-only. The dashboard should
 not imply those acknowledgements survive an integration reload until the product
 implements durable review state explicitly.
+
+The dashboard package should also assume a shadow-first rollout. It should stay
+useful even when:
+
+- no moisture sensors are mapped yet
+- no actual-rain entity is selected yet
+- automatic catch-up remains disabled for every schedule

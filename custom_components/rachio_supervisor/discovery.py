@@ -73,8 +73,16 @@ def discover_linked_entities(
     hass: HomeAssistant,
     rachio_config_entry_id: str,
 ) -> LinkedRachioEntities:
-    """Discover the relevant linked Rachio entities from the entity registry."""
+    """Discover linked Rachio entities from the Home Assistant entity registry.
+
+    Home Assistant registry rows have used both ``config_entry_id`` and
+    ``config_entry_ids`` shapes across versions and call sites. This helper
+    accepts either so the supervisor can attach to an existing built-in
+    ``rachio`` entry during shadow installs without assuming one registry
+    representation.
+    """
     registry = er.async_get(hass)
+
     def _entry_matches_config_entry(entry: er.RegistryEntry) -> bool:
         """Return True when the registry row belongs to the linked Rachio entry."""
         config_entry_ids = getattr(entry, "config_entry_ids", None)

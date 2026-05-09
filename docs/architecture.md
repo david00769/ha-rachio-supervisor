@@ -64,9 +64,24 @@ This distinction is the center of the product model.
 - docs landing page
 - recommended Lovelace dashboard package
 
+## Setup model
+
+The current install path is intentionally compatible with shadow-mode rollout in
+an existing Home Assistant system.
+
+- the config flow binds to an existing built-in `rachio` config entry
+- linked Rachio entities are discovered through the Home Assistant entity
+  registry rather than by asking the user to re-enter controller identity
+- actual-rain input is optional at setup time
+- moisture candidates are optional at setup time
+- if no moisture candidates are selected, the flow skips the schedule-mapping
+  step instead of presenting an empty mapping form
+
+This is a deliberate product choice. The supervisor should be installable
+before the operator has finalized every optional evidence source.
+
 ### possible future expansion
 
 - optional worker/add-on
 - richer policy editing
 - Smart Irrigation interop
-

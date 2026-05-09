@@ -47,7 +47,12 @@ def _flow_schema(
     rachio_options: list[tuple[str, str]],
     defaults: dict[str, Any] | None = None,
 ) -> vol.Schema:
-    """Build the shared config form schema."""
+    """Build the shared config form schema.
+
+    Rain actuals and moisture candidates stay optional so the integration can be
+    installed in observe-first shadow mode before those evidence sources are
+    finalized.
+    """
     defaults = defaults or {}
     schema: dict[Any, Any] = {
         vol.Required(
@@ -133,6 +138,8 @@ def _flow_schema(
         ),
     }
 
+    # Do not force an empty-string entity id into the selector. Older flow
+    # iterations did that and produced an invalid optional default.
     rain_default = defaults.get(CONF_RAIN_ACTUALS_ENTITY)
     rain_marker: Any = vol.Optional(CONF_RAIN_ACTUALS_ENTITY)
     if rain_default not in (None, ""):
@@ -252,6 +259,8 @@ class RachioSupervisorConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             if isinstance(entity_id, str)
         ]
         if not moisture_candidates:
+            # Skip the mapping step entirely when the operator has not selected
+            # moisture sensors. An empty mapping is an intentional valid state.
             final_input = {
                 **self._basic_input,
                 **self._policy_input,

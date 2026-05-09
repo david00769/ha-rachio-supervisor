@@ -88,6 +88,26 @@ The deeper irrigation logic is still pending:
 - deeper webhook-quality reasoning beyond registration health
 - more polished dashboard/action workflow for operator execution
 
+## Setup compatibility notes
+
+The current runtime is now shaped to support a practical shadow install in a
+real Home Assistant instance without forcing optional inputs too early.
+
+- the config flow links to an existing Home Assistant `rachio` entry using the
+  entity registry, and it now works against registry rows that expose either
+  `config_entry_ids` or the older single `config_entry_id`
+- `rain_actuals_entity` is optional during initial setup and options edits
+- candidate moisture sensors are optional during initial setup and options edits
+- if no moisture sensors are selected, the flow skips the schedule moisture
+  mapping step entirely and stores an empty explicit mapping instead of showing
+  an empty form
+- the optional rain selector no longer injects an invalid blank entity id as a
+  default
+
+That setup posture is deliberate. It keeps the integration installable in
+observe-first shadow mode before a property has finalized rain-source or
+moisture-sensor choices.
+
 ## Product stance
 
 - `Rachio` remains the actuator and schedule authority.
@@ -134,7 +154,8 @@ It is aimed at the operational gap between:
 Today the custom integration provides a narrow but real runtime:
 
 - config flow selects an existing Home Assistant `rachio` entry
-- actual rainfall is mapped from a selected sensor entity
+- actual rainfall can be mapped from a selected sensor entity, but that input is
+  optional at setup time
 - the coordinator inspects the linked Rachio entry and Rachio public API and publishes:
   - health
   - supervisor mode
