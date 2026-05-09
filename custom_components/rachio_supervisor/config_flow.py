@@ -72,7 +72,7 @@ def _flow_schema(
                     mode=selector.SelectSelectorMode.DROPDOWN,
                 )
             ),
-            vol.Required(
+            vol.Optional(
                 CONF_RAIN_ACTUALS_ENTITY,
                 default=defaults.get(CONF_RAIN_ACTUALS_ENTITY, ""),
             ): selector.EntitySelector(
@@ -129,7 +129,7 @@ def _flow_schema(
             ): selector.NumberSelector(
                 selector.NumberSelectorConfig(min=0, max=59, step=1, mode=selector.NumberSelectorMode.BOX)
             ),
-            vol.Required(
+            vol.Optional(
                 CONF_MOISTURE_SENSOR_ENTITIES,
                 default=defaults.get(
                     CONF_MOISTURE_SENSOR_ENTITIES,
