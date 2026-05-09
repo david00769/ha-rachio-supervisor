@@ -37,10 +37,14 @@ first real runtime milestones:
 - config flow and options now include a schedule-policy step so individual
   discovered Rachio schedules can be opted into automatic catch-up while the
   default posture stays observe-only
+- setup/options now also accept candidate moisture sensors, and schedule-level
+  sensors now expose moisture mapping plus a simple `dry` / `target` / `wet`
+  band derived from the mapped sensor value
 - schedule-level sensors now expose:
   - status
   - reason
   - policy
+  - moisture
   - catch-up candidate
 
 The deeper irrigation logic is still pending:
@@ -109,12 +113,13 @@ Today the custom integration provides a narrow but real runtime:
   - status
   - reason
   - policy
+  - moisture
   - catch-up candidate
 
 This milestone is still intentionally narrow. It does not yet execute catch-up
-actions or moisture write-back. The new policy surface defines which schedules
-would be eligible for later automatic catch-up, but it does not yet trigger
-watering on its own.
+actions or moisture write-back. Moisture support currently means candidate
+sensor selection, name-based schedule matching, and coarse moisture-band state;
+it does not yet write moisture into Rachio or run watering on its own.
 
 ## HACS status
 

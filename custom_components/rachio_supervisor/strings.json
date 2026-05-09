@@ -9,6 +9,7 @@
           "site_name": "Site name",
           "rachio_config_entry_id": "Existing Rachio integration",
           "rain_actuals_entity": "Actual rainfall entity",
+          "moisture_sensor_entities": "Candidate moisture sensors",
           "zone_count": "Zone count",
           "observe_first": "Start in observe-first mode",
           "allow_moisture_write_back": "Allow moisture write-back mode"
@@ -31,6 +32,7 @@
           "site_name": "Site name",
           "rachio_config_entry_id": "Existing Rachio integration",
           "rain_actuals_entity": "Actual rainfall entity",
+          "moisture_sensor_entities": "Candidate moisture sensors",
           "zone_count": "Zone count",
           "observe_first": "Start in observe-first mode",
           "allow_moisture_write_back": "Allow moisture write-back mode"

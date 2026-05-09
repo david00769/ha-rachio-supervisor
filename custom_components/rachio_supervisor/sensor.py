@@ -109,6 +109,7 @@ async def async_setup_entry(
             ("status", "Status"),
             ("reason", "Reason"),
             ("policy_mode", "Policy"),
+            ("moisture_band", "Moisture"),
             ("catch_up_candidate", "Catch-up candidate"),
         )
     )
@@ -227,6 +228,9 @@ class RachioSupervisorScheduleSensor(RachioSupervisorEntity, SensorEntity):
             "schedule_entity_id": schedule.schedule_entity_id,
             "policy_mode": schedule.policy_mode,
             "policy_basis": schedule.policy_basis,
+            "moisture_entity_id": schedule.moisture_entity_id,
+            "moisture_value": schedule.moisture_value,
+            "moisture_status": schedule.moisture_status,
             "last_run_at": schedule.last_run_at,
             "last_skip_at": schedule.last_skip_at,
             "observed_mm": schedule.observed_mm,

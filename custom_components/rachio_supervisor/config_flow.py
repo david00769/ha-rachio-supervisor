@@ -13,6 +13,7 @@ from homeassistant.util import slugify
 from .const import (
     CONF_ALLOW_MOISTURE_WRITE_BACK,
     CONF_AUTO_CATCH_UP_SCHEDULES,
+    CONF_MOISTURE_SENSOR_ENTITIES,
     CONF_OBSERVE_FIRST,
     CONF_RACHIO_CONFIG_ENTRY_ID,
     CONF_RAIN_ACTUALS_ENTITY,
@@ -20,6 +21,7 @@ from .const import (
     CONF_ZONE_COUNT,
     DEFAULT_ALLOW_MOISTURE_WRITE_BACK,
     DEFAULT_AUTO_CATCH_UP_SCHEDULES,
+    DEFAULT_MOISTURE_SENSOR_ENTITIES,
     DEFAULT_OBSERVE_FIRST,
     DEFAULT_ZONE_COUNT,
     DOMAIN,
@@ -79,6 +81,15 @@ def _flow_schema(
                     DEFAULT_ALLOW_MOISTURE_WRITE_BACK,
                 ),
             ): selector.BooleanSelector(),
+            vol.Required(
+                CONF_MOISTURE_SENSOR_ENTITIES,
+                default=defaults.get(
+                    CONF_MOISTURE_SENSOR_ENTITIES,
+                    DEFAULT_MOISTURE_SENSOR_ENTITIES,
+                ),
+            ): selector.EntitySelector(
+                selector.EntitySelectorConfig(domain="sensor", multiple=True)
+            ),
         }
     )
 
