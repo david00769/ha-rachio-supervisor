@@ -27,3 +27,4 @@
 - Tightened shadow-runtime health semantics so `Health` now reflects runtime integrity only, while optional rain/moisture gaps surface through data-completeness warnings and explicit `missing_inputs` attributes.
 - Added site-level compact moisture review payloads so mapped schedules remain visible in the dashboard even when recommended moisture writes are `0`.
 - Added compact decision attributes (`subject`, `brief`, `at_local`) for recent-decision dashboard rendering and updated the recommended Lovelace example to use built-in markdown cards instead of raw long-string entities in the first viewport.
+- Fixed the per-schedule moisture-mapping step so the active schedule name is visible directly in the mapping field label instead of relying on hidden description copy.

@@ -845,9 +845,11 @@ class ConfigFlowBehaviorTests(unittest.TestCase):
         prompt = asyncio.run(flow.async_step_moisture_map())
         self.assertEqual(prompt["type"], "form")
         self.assertEqual(prompt["step_id"], "moisture_map")
+        schema_markers = list(prompt["data_schema"].value.keys())
+        self.assertEqual(schema_markers[0].value, "Pots - Dawn Micro")
 
         result = asyncio.run(
-            flow.async_step_moisture_map({"moisture_entity": "sensor.moisture_pots"})
+            flow.async_step_moisture_map({"Pots - Dawn Micro": "sensor.moisture_pots"})
         )
         self.assertEqual(result["type"], "create_entry")
         self.assertEqual(

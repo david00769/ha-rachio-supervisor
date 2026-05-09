@@ -43,6 +43,17 @@ from .discovery import rachio_entry_options, schedule_entity_options
 UNMAPPED_SENTINEL = "__unmapped__"
 
 
+def _moisture_field_key(schedule_label: str) -> str:
+    """Return the visible form-field label for one schedule mapping step.
+
+    Home Assistant does not always render config-flow descriptions prominently
+    enough during options sub-steps. Using the human schedule label as the field
+    key keeps the active target visible in the modal itself instead of forcing
+    the operator to infer the current schedule from hidden description text.
+    """
+    return schedule_label
+
+
 def _flow_schema(
     rachio_options: list[tuple[str, str]],
     defaults: dict[str, Any] | None = None,
@@ -315,7 +326,7 @@ class RachioSupervisorConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             )
 
         schedule_entity_id, schedule_label = self._schedule_options[self._mapping_index]
-        field_key = "moisture_entity"
+        field_key = _moisture_field_key(schedule_label)
         if user_input is not None:
             selected = str(user_input.get(field_key, UNMAPPED_SENTINEL))
             if selected != UNMAPPED_SENTINEL:
@@ -454,7 +465,7 @@ class RachioSupervisorOptionsFlow(config_entries.OptionsFlow):
             )
 
         schedule_entity_id, schedule_label = self._schedule_options[self._mapping_index]
-        field_key = "moisture_entity"
+        field_key = _moisture_field_key(schedule_label)
         if user_input is not None:
             selected = str(user_input.get(field_key, UNMAPPED_SENTINEL))
             if selected != UNMAPPED_SENTINEL:
