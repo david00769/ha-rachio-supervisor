@@ -22,6 +22,7 @@ from .const import (
     CONF_OBSERVE_FIRST,
     CONF_RACHIO_CONFIG_ENTRY_ID,
     CONF_RAIN_ACTUALS_ENTITY,
+    CONF_SCHEDULE_MOISTURE_MAP,
     CONF_SITE_NAME,
     CONF_WEBHOOK_ID,
     CONF_ZONE_COUNT,
@@ -282,37 +283,23 @@ def match_controller_zone(
     return best[2]
 
 
-def match_moisture_entity(
+def resolve_moisture_entity(
     hass: HomeAssistant,
-    schedule_name: str,
-    moisture_entity_ids: set[str],
+    mapped_entity_id: str | None,
 ) -> tuple[str | None, str | None, str]:
-    """Match a candidate moisture sensor to a schedule and derive a moisture band."""
-    schedule_words = normalize_words(schedule_name)
-    best_entity_id = None
-    best_overlap = 0
-    for entity_id in moisture_entity_ids:
-        state = hass.states.get(entity_id)
-        if state is None:
-            continue
-        label = str(state.attributes.get("friendly_name") or entity_id)
-        overlap = len(schedule_words & normalize_words(label))
-        if overlap > best_overlap:
-            best_overlap = overlap
-            best_entity_id = entity_id
-
-    if best_entity_id is None:
+    """Resolve one explicit moisture entity mapping and derive a moisture band."""
+    if not mapped_entity_id:
         return None, None, "unmapped"
 
-    state = hass.states.get(best_entity_id)
+    state = hass.states.get(mapped_entity_id)
     if state is None:
-        return best_entity_id, None, "missing"
+        return mapped_entity_id, None, "missing"
     if state.state in {STATE_UNAVAILABLE, STATE_UNKNOWN}:
-        return best_entity_id, str(state.state), "unavailable"
+        return mapped_entity_id, str(state.state), "unavailable"
     try:
         numeric = float(state.state)
     except (TypeError, ValueError):
-        return best_entity_id, str(state.state), "non_numeric"
+        return mapped_entity_id, str(state.state), "non_numeric"
 
     if numeric < DRY_THRESHOLD:
         band = "dry"
@@ -320,30 +307,34 @@ def match_moisture_entity(
         band = "wet"
     else:
         band = "target"
-    return best_entity_id, f"{numeric:g}", band
+    return mapped_entity_id, f"{numeric:g}", band
 
 
 def apply_moisture_mapping(
     hass: HomeAssistant,
     schedules: tuple[ScheduleSnapshot, ...],
-    moisture_sensor_entities: set[str],
+    schedule_moisture_map: dict[str, str],
 ) -> tuple[ScheduleSnapshot, ...]:
     """Attach moisture mapping and banding to schedule snapshots."""
     hydrated: list[ScheduleSnapshot] = []
     for schedule in schedules:
-        moisture_entity_id, moisture_value, moisture_band = match_moisture_entity(
+        mapped_entity_id = (
+            schedule_moisture_map.get(schedule.schedule_entity_id or "")
+            if schedule.schedule_entity_id
+            else None
+        )
+        moisture_entity_id, moisture_value, moisture_band = resolve_moisture_entity(
             hass,
-            schedule.name,
-            moisture_sensor_entities,
+            mapped_entity_id,
         )
         if moisture_entity_id is None:
-            moisture_status = "No matching moisture sensor mapped."
+            moisture_status = "No explicit moisture sensor is mapped for this schedule."
         elif moisture_band in {"unavailable", "non_numeric", "missing"}:
             moisture_status = (
                 "Mapped moisture sensor is not reporting a usable numeric value."
             )
         else:
-            moisture_status = "Mapped moisture sensor matched by name overlap."
+            moisture_status = "Mapped moisture sensor resolved explicitly."
         hydrated.append(
             ScheduleSnapshot(
                 rule_id=schedule.rule_id,
@@ -606,10 +597,12 @@ class RachioSupervisorCoordinator(DataUpdateCoordinator[SupervisorSnapshot]):
             for entity_id in data.get(CONF_AUTO_CATCH_UP_SCHEDULES, [])
             if isinstance(entity_id, str)
         }
-        moisture_sensor_entities = {
-            entity_id
-            for entity_id in data.get(CONF_MOISTURE_SENSOR_ENTITIES, [])
-            if isinstance(entity_id, str)
+        schedule_moisture_map = {
+            str(schedule_entity_id): str(moisture_entity_id)
+            for schedule_entity_id, moisture_entity_id in data.get(
+                CONF_SCHEDULE_MOISTURE_MAP, {}
+            ).items()
+            if schedule_entity_id and moisture_entity_id
         }
         notes: list[str] = []
 
@@ -725,13 +718,13 @@ class RachioSupervisorCoordinator(DataUpdateCoordinator[SupervisorSnapshot]):
                 schedule_snapshots = apply_moisture_mapping(
                     self.hass,
                     evidence.schedule_snapshots,
-                    moisture_sensor_entities,
+                    schedule_moisture_map,
                 )
-                if moisture_sensor_entities and not any(
+                if data.get(CONF_MOISTURE_SENSOR_ENTITIES, []) and not any(
                     schedule.moisture_entity_id for schedule in schedule_snapshots
                 ):
                     notes.append(
-                        "Candidate moisture sensors were configured, but none matched discovered schedules by name."
+                        "Candidate moisture sensors were configured, but no explicit schedule mapping is active."
                     )
                 if webhook_health == "mismatch":
                     notes.append(

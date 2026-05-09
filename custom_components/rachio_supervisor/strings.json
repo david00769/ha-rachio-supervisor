@@ -21,6 +21,13 @@
         "data": {
           "auto_catch_up_schedule_entities": "Automatic catch-up schedules"
         }
+      },
+      "moisture_map": {
+        "title": "Moisture mapping",
+        "description": "Map a candidate moisture sensor to schedule {position} of {total}: {schedule_name}.",
+        "data": {
+          "moisture_entity": "Mapped moisture sensor"
+        }
       }
     }
   },
@@ -43,6 +50,13 @@
         "description": "Choose which discovered Rachio schedules are allowed automatic catch-up. All others stay observe-only.",
         "data": {
           "auto_catch_up_schedule_entities": "Automatic catch-up schedules"
+        }
+      },
+      "moisture_map": {
+        "title": "Moisture mapping",
+        "description": "Map a candidate moisture sensor to schedule {position} of {total}: {schedule_name}.",
+        "data": {
+          "moisture_entity": "Mapped moisture sensor"
         }
       }
     }

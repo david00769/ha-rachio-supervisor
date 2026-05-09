@@ -15,6 +15,7 @@ CONF_RACHIO_CONFIG_ENTRY_ID = "rachio_config_entry_id"
 CONF_RAIN_ACTUALS_ENTITY = "rain_actuals_entity"
 CONF_AUTO_CATCH_UP_SCHEDULES = "auto_catch_up_schedule_entities"
 CONF_MOISTURE_SENSOR_ENTITIES = "moisture_sensor_entities"
+CONF_SCHEDULE_MOISTURE_MAP = "schedule_moisture_map"
 CONF_ZONE_COUNT = "zone_count"
 CONF_OBSERVE_FIRST = "observe_first"
 CONF_ALLOW_MOISTURE_WRITE_BACK = "allow_moisture_write_back"
@@ -24,6 +25,7 @@ DEFAULT_OBSERVE_FIRST = True
 DEFAULT_ALLOW_MOISTURE_WRITE_BACK = False
 DEFAULT_AUTO_CATCH_UP_SCHEDULES: list[str] = []
 DEFAULT_MOISTURE_SENSOR_ENTITIES: list[str] = []
+DEFAULT_SCHEDULE_MOISTURE_MAP: dict[str, str] = {}
 
 SERVICE_EVALUATE_NOW = "evaluate_now"
 SERVICE_WRITE_MOISTURE_NOW = "write_moisture_now"
