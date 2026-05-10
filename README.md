@@ -182,6 +182,8 @@ real Home Assistant instance without forcing optional inputs too early.
   `moisture_sensor_entity` field and a separate ignored `schedule_name` display
   field; this keeps the current schedule visible without using dynamic human
   schedule names as submitted field keys
+- saving options reloads the integration entry so the dashboard immediately
+  rebuilds coordinator state from the new schedule-to-moisture mapping
 - the optional rain selector no longer injects an invalid blank entity id as a
   default
 

@@ -27,6 +27,14 @@ from .rachio_api import RachioClient
 PLATFORMS: list[Platform] = [Platform.SENSOR]
 
 
+async def _async_options_update_listener(
+    hass: HomeAssistant,
+    entry: ConfigEntry,
+) -> None:
+    """Reload the entry after options change so coordinator state is rebuilt."""
+    await hass.config_entries.async_reload(entry.entry_id)
+
+
 async def _async_handle_evaluate_now(hass: HomeAssistant, call: ServiceCall) -> None:
     """Refresh the loaded supervisor entries immediately."""
     coordinators = hass.data.get(DOMAIN, {})
@@ -340,6 +348,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     coordinator = RachioSupervisorCoordinator(hass=hass, entry=entry)
     await coordinator.async_config_entry_first_refresh()
     hass.data[DOMAIN][entry.entry_id] = coordinator
+    entry.async_on_unload(entry.add_update_listener(_async_options_update_listener))
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
     return True
 
