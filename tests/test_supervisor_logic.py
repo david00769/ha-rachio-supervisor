@@ -12,6 +12,7 @@ from datetime import datetime, timezone
 import importlib
 from pathlib import Path
 import sys
+import tempfile
 from types import SimpleNamespace
 import types
 import unittest
@@ -1563,7 +1564,11 @@ class RuntimeHealthAndMoistureTests(unittest.TestCase):
         items = build_zone_overview_items(hass, (schedule,), (flow_alert,))
 
         self.assertEqual(items[0]["zone_name"], "Pots - Dawn Micro")
-        self.assertEqual(items[0]["image_path"], "/local/rachio-supervisor/zones/dawn-micro-pots.jpg")
+        self.assertEqual(items[0]["image_path"], "/rachio_supervisor/zone-placeholder.svg")
+        self.assertEqual(
+            items[0]["suggested_image_path"],
+            "/local/rachio-supervisor/zones/dawn-micro-pots.jpg",
+        )
         self.assertEqual(
             items[0]["fallback_image_path"],
             "/rachio_supervisor/zone-placeholder.svg",
@@ -1576,6 +1581,53 @@ class RuntimeHealthAndMoistureTests(unittest.TestCase):
         self.assertEqual(items[0]["plant_note"], "Pots and herbs")
         self.assertEqual(items[0]["detail_note"], "Drip line, flat, every second day")
         self.assertEqual(items[0]["water_badge"], "watered")
+
+    def test_zone_overview_uses_existing_local_zone_image(self) -> None:
+        schedule = ScheduleSnapshot(
+            rule_id="rule-1",
+            name="Pots - Dawn Micro",
+            status="completed_recently",
+            reason="ran",
+            catch_up_candidate="not_needed",
+            policy_mode="observe_only",
+            policy_basis="default",
+            schedule_entity_id="switch.schedule_pots",
+            zone_entity_id="switch.zone_pots",
+            controller_zone_id="zone-1",
+            moisture_entity_id=None,
+            moisture_value=None,
+            moisture_band="unmapped",
+            moisture_status="pending",
+            moisture_write_back_ready="ready",
+            recommended_action="none",
+            review_state="none",
+            runtime_minutes=3,
+            last_run_at="2026-05-10T06:00:00+10:00",
+            last_skip_at=None,
+            summary="ran",
+            threshold_mm=None,
+            observed_mm=None,
+        )
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            image = root / "www" / "rachio-supervisor" / "zones" / "dawn-micro-pots.jpg"
+            image.parent.mkdir(parents=True)
+            image.write_bytes(b"fake jpg")
+            hass = SimpleNamespace(
+                states=SimpleNamespace(get=lambda entity_id: None),
+                config=SimpleNamespace(path=lambda *parts: str(root.joinpath(*parts))),
+            )
+
+            items = build_zone_overview_items(hass, (schedule,))
+
+        self.assertEqual(
+            items[0]["image_path"],
+            "/local/rachio-supervisor/zones/dawn-micro-pots.jpg",
+        )
+        self.assertEqual(
+            items[0]["fallback_image_path"],
+            "/rachio_supervisor/zone-placeholder.svg",
+        )
 
     def test_zone_overview_card_static_contract(self) -> None:
         card_path = (

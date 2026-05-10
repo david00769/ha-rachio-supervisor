@@ -167,6 +167,7 @@ includes:
 - `schedule_entity_id`
 - `zone_entity_id`
 - `image_path`
+- `suggested_image_path`
 - `fallback_image_path`
 - `quick_run_minutes`
 - `next_run`
@@ -178,6 +179,11 @@ includes:
 - `supervisor_badge`
 - `moisture_band`
 - `flow_alert_state`
+
+`image_path` points at a packaged placeholder unless the matching optional local
+photo exists under `/config/www/rachio-supervisor/zones/`. `suggested_image_path`
+shows the filename convention to use for adding real zone photos without causing
+browser 404s on a fresh install.
 - `plant_note`
 - `detail_note`
 

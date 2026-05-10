@@ -122,7 +122,9 @@ The integration serves this as a lightweight Lovelace module:
 The module reads `sensor.rachio_site_zone_overview` and does not require a
 build step or an external custom-card dependency. Built-in Lovelace cards can
 still consume the same entity payload as a fallback, but the packaged custom
-card is the canonical public dashboard surface.
+card is the canonical public dashboard surface. Zone images use the packaged
+placeholder by default; optional local photos are only referenced when the
+matching file exists in Home Assistant's `www/rachio-supervisor/zones/` folder.
 
 Automatic catch-up and moisture write-back remain separate policy paths.
 

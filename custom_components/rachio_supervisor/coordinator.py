@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
+from pathlib import Path
 import re
 import urllib.parse
 
@@ -1293,6 +1294,18 @@ def _matching_flow_alert(
     return None
 
 
+def _existing_local_zone_image_path(hass: HomeAssistant, slug: str) -> str | None:
+    """Return the local zone image URL only when the HA www file exists."""
+    config = getattr(hass, "config", None)
+    path_getter = getattr(config, "path", None)
+    if not callable(path_getter):
+        return None
+    image_path = Path(path_getter("www", "rachio-supervisor", "zones", f"{slug}.jpg"))
+    if image_path.exists():
+        return f"/local/rachio-supervisor/zones/{slug}.jpg"
+    return None
+
+
 def build_zone_overview_items(
     hass: HomeAssistant,
     schedules: tuple[ScheduleSnapshot, ...],
@@ -1302,6 +1315,7 @@ def build_zone_overview_items(
     items: list[dict[str, object]] = []
     for index, schedule in enumerate(schedules, start=1):
         slug = "-".join(sorted(normalize_words(schedule.name))) or f"zone-{index}"
+        local_image_path = _existing_local_zone_image_path(hass, slug)
         next_run = _state_attr_value(
             hass,
             schedule.schedule_entity_id,
@@ -1375,7 +1389,8 @@ def build_zone_overview_items(
                 "schedule_name": schedule.name,
                 "schedule_entity_id": schedule.schedule_entity_id,
                 "zone_entity_id": schedule.zone_entity_id,
-                "image_path": f"/local/rachio-supervisor/zones/{slug}.jpg",
+                "image_path": local_image_path or ZONE_PLACEHOLDER_PATH,
+                "suggested_image_path": f"/local/rachio-supervisor/zones/{slug}.jpg",
                 "fallback_image_path": ZONE_PLACEHOLDER_PATH,
                 "quick_run_minutes": schedule.runtime_minutes,
                 "schedule_state": schedule_state,
