@@ -62,13 +62,33 @@ The accepted live shadow layout is intentionally short:
 1. Irrigation status
 2. Catch-up / top-up
 3. Moisture drift
-4. Flow review
-5. Schedule detail
+4. Moisture actions, only when manual write-back is intentionally exposed
+5. Flow review
 6. Audit
 
 Freshness and parity diagnostics still matter, but they should not displace the
 operator decision rail in the first viewport. Keep them as follow-on cards or a
 shadow-only appendix during the 7-day comparison window.
+
+## Shadow and production relationship
+
+The shadow view is temporary. It is the proving surface used while the old
+Codex-driven irrigation workflow remains authoritative.
+
+After the shadow period passes, the plugin-backed sections should replace the
+old supervisor cards on the production irrigation dashboard. They should not
+remain as a second permanent page with duplicated facts.
+
+The intended relationship is:
+
+- during shadow, use the separate view to compare old and new behavior
+- during cutover, promote the accepted plugin-backed sections into the
+  production irrigation dashboard
+- after cutover, keep only a small audit/diagnostic appendix for raw entity
+  detail
+- do not show the same schedule recommendation in both a "Moisture review" list
+  and a separate "Schedule detail" list unless the second view adds different
+  operator value
 
 ## First-viewport contract
 
@@ -96,6 +116,7 @@ future-looking abstraction. Today that means:
 - the layout is section-led, not card-mosaic-led
 - moisture stays review-oriented and manual-first
 - mapped moisture state is visible even when recommended write count is zero
+- manual moisture write actions are confirmation-gated and do not start watering
 - flow alerts remain visibly gated until explicitly cleared
 - raw decision strings live in `Audit`, not in the first scan path
 
@@ -124,6 +145,9 @@ Remaining issues:
 - queue and audit context should stay below the posture rail unless non-zero
 - parity comparison should be a shadow-only appendix, not a permanent operator
   surface
+- repeated schedule summaries create confusion; the accepted pattern keeps one
+  moisture review list and removes the duplicate schedule-detail list unless a
+  specific drill-down is needed
 
 That critique should drive future dashboard iterations before the production
 cutover, rather than treating the first live shadow view as finished.
@@ -292,13 +316,16 @@ useful even when:
 The shadow dashboard should be a separate view, not a modification of the
 production irrigation dashboard.
 
-Its job is to make old-versus-new comparison easy, not to look finished for the
-end user on day one. That means:
+Its job is to make old-versus-new comparison easy and to prove the replacement
+operator model before production cutover. That means:
 
 - keep the comparison band explicit
 - keep all destructive or externally visible actions gated
-- prefer one comparison entities card over many duplicated tiles
+- prefer one comparison entities card over many duplicated tiles during the
+  shadow period only
 - show parity drift clearly before introducing polished operator-only sections
+- when the plugin-backed sections prove out, move those sections into the
+  production irrigation dashboard and retire the old-script cards
 
 ## Shadow comparison note
 

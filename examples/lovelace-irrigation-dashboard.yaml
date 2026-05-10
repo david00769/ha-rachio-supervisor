@@ -9,7 +9,7 @@ views:
           - type: heading
             heading: Irrigation status
           - type: markdown
-            title: Status rail
+            title: Irrigation status
             content: |
               **Health** {{ states('sensor.rachio_site_health') }} ·
               **Webhook** {{ states('sensor.rachio_site_webhook_health') }} ·
@@ -22,9 +22,9 @@ views:
               {% set missing = state_attr('sensor.rachio_site_health', 'missing_inputs') or [] %}
               {{ reason }}{% if missing %}
 
-              Data warnings: {{ missing | join(', ') }}.{% endif %}
+              **Needs setup:** {{ missing | join(', ') | replace('_', ' ') | replace('moisture sensor problem:', 'moisture sensor: ') }}.{% endif %}
 
-              Health is supervisor runtime integrity. Webhook is Rachio event ingress.
+              Health checks runtime. Webhook checks Rachio event delivery.
       - type: grid
         cards:
           - type: heading
@@ -62,7 +62,7 @@ views:
               - entity: sensor.rachio_site_last_moisture_write
                 name: Last write
           - type: markdown
-            title: Mapped schedule review
+            title: Moisture review
             content: |
               {% set items = state_attr('sensor.rachio_site_recommended_moisture_writes', 'moisture_review_items') or [] %}
               {% if items %}
@@ -116,34 +116,6 @@ views:
               {% endfor %}
               {% else %}
               No flow alerts needing review.
-              {% endif %}
-      - type: grid
-        cards:
-          - type: heading
-            heading: Schedule detail
-          - type: markdown
-            content: |
-              {% set items = state_attr('sensor.rachio_site_recommended_moisture_writes', 'moisture_review_items') or [] %}
-              {% if items %}
-              {% for item in items %}
-              {% set action = item.get('recommended_action') or '' %}
-              {% set action_labels = {
-                'write_moisture_now': 'Write ready',
-                'resolve_write_back': 'Resolve Rachio zone',
-                'map_moisture_sensor': 'Map sensor',
-                'repair_moisture_sensor': 'Repair sensor',
-                'review_auto_catch_up': 'Review catch-up',
-                'none': 'No write needed'
-              } %}
-              {% set action_label = item.get('recommended_action_label') or action_labels.get(action, action or 'Review') %}
-              {% set band = item.get('moisture_band') %}
-              {% set data_quality = item.get('data_quality') or ('sensor_' ~ band if band in ['missing', 'unavailable', 'non_numeric'] else none) %}
-              **{{ item.schedule_name }}**<br>
-              `{{ band }}` · {{ action_label }} · `{{ item.review_state }}`{% if data_quality and data_quality != 'ok' %} · `{{ data_quality }}`{% endif %}
-
-              {% endfor %}
-              {% else %}
-              Schedule moisture detail appears after candidate sensors are mapped.
               {% endif %}
       - type: grid
         cards:
