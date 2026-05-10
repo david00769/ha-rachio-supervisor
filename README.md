@@ -179,9 +179,9 @@ real Home Assistant instance without forcing optional inputs too early.
   mapping step entirely and stores an empty explicit mapping instead of showing
   an empty form
 - when moisture mapping is required, the form uses one stable
-  `moisture_sensor_entity` field and shows the live schedule name in the step
-  description; this avoids Home Assistant options-flow handoff failures caused
-  by dynamic human schedule names as field keys
+  `moisture_sensor_entity` field and a separate ignored `schedule_name` display
+  field; this keeps the current schedule visible without using dynamic human
+  schedule names as submitted field keys
 - the optional rain selector no longer injects an invalid blank entity id as a
   default
 

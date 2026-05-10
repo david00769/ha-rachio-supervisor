@@ -44,6 +44,7 @@ from .discovery import rachio_entry_options, schedule_entity_options
 _LOGGER = logging.getLogger(__name__)
 
 MOISTURE_SENSOR_FIELD = "moisture_sensor_entity"
+MOISTURE_SCHEDULE_CONTEXT_FIELD = "schedule_name"
 UNMAPPED_SENTINEL = "__unmapped__"
 
 
@@ -68,7 +69,11 @@ def _submitted_field_value(
     candidates: list[str] = []
     if field_key in user_input:
         candidates.append(str(user_input[field_key]))
-    candidates.extend(str(value) for value in user_input.values())
+    candidates.extend(
+        str(value)
+        for key, value in user_input.items()
+        if key not in {field_key, MOISTURE_SCHEDULE_CONTEXT_FIELD}
+    )
     for candidate in candidates:
         if candidate in option_tokens:
             return option_tokens[candidate]
@@ -395,6 +400,12 @@ class RachioSupervisorConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
 
         schema = vol.Schema(
             {
+                vol.Optional(
+                    MOISTURE_SCHEDULE_CONTEXT_FIELD,
+                    default=schedule_label,
+                ): selector.TextSelector(
+                    selector.TextSelectorConfig(type=selector.TextSelectorType.TEXT)
+                ),
                 vol.Required(field_key, default=UNMAPPED_SENTINEL): selector.SelectSelector(
                     selector.SelectSelectorConfig(
                         options=options,
@@ -546,6 +557,12 @@ class RachioSupervisorOptionsFlow(config_entries.OptionsFlow):
             options.append(selector.SelectOptionDict(value=entity_id, label=label))
         schema = vol.Schema(
             {
+                vol.Optional(
+                    MOISTURE_SCHEDULE_CONTEXT_FIELD,
+                    default=schedule_label,
+                ): selector.TextSelector(
+                    selector.TextSelectorConfig(type=selector.TextSelectorType.TEXT)
+                ),
                 vol.Required(field_key, default=default_value): selector.SelectSelector(
                     selector.SelectSelectorConfig(
                         options=options,

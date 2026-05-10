@@ -31,6 +31,7 @@
         "title": "Moisture mapping",
         "description": "Map a candidate moisture sensor to schedule {position} of {total}: {schedule_name}.",
         "data": {
+          "schedule_name": "Schedule",
           "moisture_sensor_entity": "Moisture sensor"
         }
       }
@@ -66,6 +67,7 @@
         "title": "Moisture mapping",
         "description": "Map a candidate moisture sensor to schedule {position} of {total}: {schedule_name}.",
         "data": {
+          "schedule_name": "Schedule",
           "moisture_sensor_entity": "Moisture sensor"
         }
       }

@@ -845,12 +845,16 @@ class ConfigFlowBehaviorTests(unittest.TestCase):
         prompt = asyncio.run(flow.async_step_moisture_map())
         self.assertEqual(prompt["type"], "form")
         self.assertEqual(prompt["step_id"], "moisture_map")
-        schema_markers = list(prompt["data_schema"].value.keys())
-        self.assertEqual(schema_markers[0].value, config_flow.MOISTURE_SENSOR_FIELD)
+        schema_markers = [marker.value for marker in prompt["data_schema"].value.keys()]
+        self.assertIn(config_flow.MOISTURE_SCHEDULE_CONTEXT_FIELD, schema_markers)
+        self.assertIn(config_flow.MOISTURE_SENSOR_FIELD, schema_markers)
 
         result = asyncio.run(
             flow.async_step_moisture_map(
-                {config_flow.MOISTURE_SENSOR_FIELD: "sensor.moisture_pots"}
+                {
+                    config_flow.MOISTURE_SCHEDULE_CONTEXT_FIELD: "Pots - Dawn Micro",
+                    config_flow.MOISTURE_SENSOR_FIELD: "sensor.moisture_pots",
+                }
             )
         )
         self.assertEqual(result["type"], "create_entry")
@@ -908,7 +912,10 @@ class ConfigFlowBehaviorTests(unittest.TestCase):
 
         result = asyncio.run(
             flow.async_step_moisture_map(
-                {config_flow.MOISTURE_SENSOR_FIELD: config_flow.UNMAPPED_SENTINEL}
+                {
+                    config_flow.MOISTURE_SCHEDULE_CONTEXT_FIELD: "Boxwood + Liriope",
+                    config_flow.MOISTURE_SENSOR_FIELD: config_flow.UNMAPPED_SENTINEL,
+                }
             )
         )
 
