@@ -67,9 +67,12 @@ views:
               {% set items = state_attr('sensor.rachio_site_recommended_moisture_writes', 'moisture_review_items') or [] %}
               {% if items %}
               {% for item in items %}
+              {% set action_label = item.get('recommended_action_label') or item.get('recommended_action') or 'Review' %}
+              {% set data_quality = item.get('data_quality') %}
+              {% set last_updated = item.get('moisture_last_updated') %}
               **{{ item.schedule_name }}**  
-              {{ item.posture_note }} · `{{ item.moisture_band }}`{% if item.moisture_value and item.moisture_value not in ['unknown', 'unavailable'] %} · {{ item.moisture_value }}%{% endif %}{% if item.data_quality and item.data_quality != 'ok' %} · `{{ item.data_quality }}`{% endif %}<br>
-              {{ item.recommended_action_label or item.recommended_action }}{% if item.moisture_write_back_ready %} · {{ item.moisture_write_back_ready }}{% endif %}{% if item.moisture_last_updated %} · updated {{ item.moisture_last_updated[11:16] }}{% endif %}
+              {{ item.posture_note }} · `{{ item.moisture_band }}`{% if item.moisture_value and item.moisture_value not in ['unknown', 'unavailable'] %} · {{ item.moisture_value }}%{% endif %}{% if data_quality and data_quality != 'ok' %} · `{{ data_quality }}`{% endif %}<br>
+              {{ action_label }}{% if item.moisture_write_back_ready %} · {{ item.moisture_write_back_ready }}{% endif %}{% if last_updated %} · updated {{ last_updated[11:16] }}{% endif %}
 
               {% endfor %}
               {% else %}
@@ -113,8 +116,10 @@ views:
               {% set items = state_attr('sensor.rachio_site_recommended_moisture_writes', 'moisture_review_items') or [] %}
               {% if items %}
               {% for item in items %}
+              {% set action_label = item.get('recommended_action_label') or item.get('recommended_action') or 'Review' %}
+              {% set data_quality = item.get('data_quality') %}
               **{{ item.schedule_name }}**<br>
-              `{{ item.moisture_band }}` · {{ item.recommended_action_label or item.recommended_action }} · `{{ item.review_state }}`{% if item.data_quality and item.data_quality != 'ok' %} · `{{ item.data_quality }}`{% endif %}
+              `{{ item.moisture_band }}` · {{ action_label }} · `{{ item.review_state }}`{% if data_quality and data_quality != 'ok' %} · `{{ data_quality }}`{% endif %}
 
               {% endfor %}
               {% else %}
