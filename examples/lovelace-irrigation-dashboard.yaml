@@ -8,29 +8,20 @@ views:
         cards:
           - type: heading
             heading: Irrigation status
-          - type: entities
-            title: Irrigation status
-            show_header_toggle: false
-            entities:
-              - entity: sensor.rachio_site_health
-                name: Health
-              - entity: sensor.rachio_site_webhook_health
-                name: Webhook
-              - entity: sensor.rachio_site_observed_rain_24h
-                name: Rain 24h
-              - entity: sensor.rachio_site_catch_up_evidence
-                name: Catch-up
-              - entity: sensor.rachio_site_last_catch_up_decision
-                name: Last catch-up
-              - entity: sensor.rachio_site_active_flow_alerts
-                name: Flow
-              - entity: sensor.rachio_site_recommended_moisture_writes
-                name: Moisture
           - type: markdown
+            title: Status rail
             content: |
+              | Health | Webhook | Rain | Catch-up | Moisture | Flow |
+              | --- | --- | --- | --- | --- | --- |
+              | {{ states('sensor.rachio_site_health') }} | {{ states('sensor.rachio_site_webhook_health') }} | {{ states('sensor.rachio_site_observed_rain_24h') }} | {{ states('sensor.rachio_site_catch_up_evidence') }} | {{ states('sensor.rachio_site_recommended_moisture_writes') }} | {{ states('sensor.rachio_site_active_flow_alerts') }} |
+
               {% set reason = state_attr('sensor.rachio_site_health', 'supervisor_reason') or 'Runtime posture is not reported yet.' %}
               {% set missing = state_attr('sensor.rachio_site_health', 'missing_inputs') or [] %}
-              {{ reason }}{% if missing %} Data warnings: {{ missing | join(', ') }}.{% endif %}
+              {{ reason }}{% if missing %}
+
+              Data warnings: {{ missing | join(', ') }}.{% endif %}
+
+              Health is supervisor runtime integrity. Webhook is Rachio event ingress.
       - type: grid
         cards:
           - type: heading
@@ -62,26 +53,27 @@ views:
             show_header_toggle: false
             entities:
               - entity: sensor.rachio_site_recommended_moisture_writes
-                name: Recommended writes
+                name: Recommended
               - entity: sensor.rachio_site_ready_moisture_writes
-                name: Ready writes
+                name: Ready
               - entity: sensor.rachio_site_last_moisture_write
                 name: Last write
           - type: markdown
+            title: Mapped schedule review
             content: |
               {% set items = state_attr('sensor.rachio_site_recommended_moisture_writes', 'moisture_review_items') or [] %}
               {% if items %}
               {% for item in items %}
               **{{ item.schedule_name }}**  
-              {{ item.posture_note }} · `{{ item.moisture_band }}` · `{{ item.review_state }}`{% if item.moisture_write_back_ready %} · `{{ item.moisture_write_back_ready }}`{% endif %}
-              {% if item.recommended_action %}{{ item.recommended_action }}{% endif %}
+              {{ item.posture_note }} · `{{ item.moisture_band }}`{% if item.moisture_value and item.moisture_value not in ['unknown', 'unavailable'] %} · {{ item.moisture_value }}%{% endif %}<br>
+              {{ item.recommended_action }}{% if item.moisture_write_back_ready %} · {{ item.moisture_write_back_ready }}{% endif %}
 
               {% endfor %}
               {% else %}
               No mapped schedule moisture review items yet.
               {% endif %}
 
-              Writes are manual. No automatic top-up watering.
+              Manual writes only. No automatic top-up watering.
       - type: grid
         cards:
           - type: heading
@@ -91,9 +83,9 @@ views:
             show_header_toggle: false
             entities:
               - entity: sensor.rachio_site_active_flow_alerts
-                name: Active alerts
+                name: Active
               - entity: sensor.rachio_site_flow_alert_queue
-                name: Review queue
+                name: Queue
               - entity: sensor.rachio_site_last_flow_alert_decision
                 name: Last decision
           - type: markdown
@@ -117,10 +109,10 @@ views:
             content: |
               {% set items = state_attr('sensor.rachio_site_recommended_moisture_writes', 'moisture_review_items') or [] %}
               {% if items %}
-              | Schedule | Band | Review | Write-back |
-              | --- | --- | --- | --- |
               {% for item in items %}
-              | {{ item.schedule_name }} | {{ item.moisture_band }} | {{ item.review_state }} | {{ item.moisture_write_back_ready }} |
+              **{{ item.schedule_name }}**<br>
+              `{{ item.moisture_band }}` · `{{ item.review_state }}` · `{{ item.moisture_write_back_ready }}`
+
               {% endfor %}
               {% else %}
               Schedule moisture detail appears after candidate sensors are mapped.

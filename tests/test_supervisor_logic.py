@@ -622,6 +622,43 @@ class FlowAlertClearTests(unittest.TestCase):
         self.assertEqual(refreshed, ["called"])
 
 
+class ServiceRegistrationTests(unittest.TestCase):
+    def test_evaluate_now_service_handler_accepts_home_assistant_call_shape(self) -> None:
+        refreshed: list[str] = []
+
+        class _FakeServices:
+            def __init__(self) -> None:
+                self.handlers: dict[tuple[str, str], object] = {}
+                self.removed: list[tuple[str, str]] = []
+
+            def has_service(self, _domain: str, _service: str) -> bool:
+                return False
+
+            def async_register(self, domain: str, service: str, handler, schema=None) -> None:
+                self.handlers[(domain, service)] = handler
+
+            def async_remove(self, domain: str, service: str) -> None:
+                self.removed.append((domain, service))
+
+        async def _refresh() -> None:
+            refreshed.append("called")
+
+        services = _FakeServices()
+        coordinator = types.SimpleNamespace(async_request_refresh=_refresh)
+        hass = types.SimpleNamespace(
+            services=services,
+            data={DOMAIN: {"entry-1": coordinator}},
+        )
+
+        remove = integration_init._async_register_services(hass)
+        handler = services.handlers[(DOMAIN, "evaluate_now")]
+        asyncio.run(handler(types.SimpleNamespace(data={})))
+
+        self.assertEqual(refreshed, ["called"])
+        remove()
+        self.assertIn((DOMAIN, "evaluate_now"), services.removed)
+
+
 class CadenceParityTests(unittest.TestCase):
     def _coordinator(self) -> RachioSupervisorCoordinator:
         coordinator = object.__new__(RachioSupervisorCoordinator)

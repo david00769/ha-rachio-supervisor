@@ -264,6 +264,9 @@ def _async_register_services(hass: HomeAssistant) -> Callable[[], None]:
     if hass.services.has_service(DOMAIN, SERVICE_EVALUATE_NOW):
         return lambda: None
 
+    async def _handle_evaluate_now(call: ServiceCall) -> None:
+        await _async_handle_evaluate_now(hass, call)
+
     async def _handle_ack(call: ServiceCall) -> None:
         await _async_handle_acknowledge_recommendation(hass, call)
 
@@ -276,7 +279,7 @@ def _async_register_services(hass: HomeAssistant) -> Callable[[], None]:
     hass.services.async_register(
         DOMAIN,
         SERVICE_EVALUATE_NOW,
-        _async_handle_evaluate_now,
+        _handle_evaluate_now,
         schema=vol.Schema({vol.Optional("entity_id"): cv.entity_ids}),
     )
     hass.services.async_register(
