@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 from typing import Any
 
 import voluptuous as vol
@@ -40,34 +41,28 @@ from .const import (
 )
 from .discovery import rachio_entry_options, schedule_entity_options
 
+_LOGGER = logging.getLogger(__name__)
+
+MOISTURE_SENSOR_FIELD = "moisture_sensor_entity"
 UNMAPPED_SENTINEL = "__unmapped__"
 
 
-def _moisture_field_key(schedule_label: str) -> str:
-    """Return the visible form-field label for one schedule mapping step.
-
-    Home Assistant does not always render config-flow descriptions prominently
-    enough during options sub-steps. Using the human schedule label as the field
-    key keeps the active target visible in the modal itself instead of forcing
-    the operator to infer the current schedule from hidden description text.
-    """
-    return schedule_label
+def _moisture_field_key(_schedule_label: str) -> str:
+    """Return the stable form-field key for one schedule mapping step."""
+    return MOISTURE_SENSOR_FIELD
 
 
 def _submitted_field_value(
     user_input: dict[str, Any],
-    field_key: str,
+    field_key: str = MOISTURE_SENSOR_FIELD,
     option_tokens: dict[str, str] | None = None,
     default: str = UNMAPPED_SENTINEL,
 ) -> str:
-    """Return the submitted value even if HA normalizes the visible field label.
+    """Return the submitted moisture sensor value.
 
-    Some Home Assistant config-flow surfaces mutate the visible label enough
-    that the posted payload key no longer matches the schema key exactly. When a
-    moisture-map step only contains one field, accept that sole submitted value
-    instead of silently treating the selection as unmapped. Some surfaces also
-    post the visible option label instead of the canonical option value, so
-    resolve either token back to the stored entity id.
+    The normal path uses ``moisture_sensor_entity`` as a stable ASCII key. The
+    fallback scan is intentionally retained for older clients and HA surfaces
+    that post the visible option label instead of the canonical entity id.
     """
     option_tokens = option_tokens or {}
     candidates: list[str] = []
@@ -81,6 +76,23 @@ def _submitted_field_value(
         if candidate:
             return candidate
     return default
+
+
+def _log_moisture_mapping_submission(
+    schedule_entity_id: str,
+    schedule_label: str,
+    user_input: dict[str, Any],
+    selected: str,
+) -> None:
+    """Log enough options-flow evidence to debug HA form handoff issues."""
+    _LOGGER.debug(
+        "Moisture mapping submit: schedule_entity_id=%s schedule_label=%s "
+        "user_input_keys=%s resolved_selected=%s",
+        schedule_entity_id,
+        schedule_label,
+        sorted(str(key) for key in user_input),
+        selected,
+    )
 
 
 def _flow_schema(
@@ -364,6 +376,12 @@ class RachioSupervisorConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             option_tokens[label] = entity_id
         if user_input is not None:
             selected = _submitted_field_value(user_input, field_key, option_tokens)
+            _log_moisture_mapping_submission(
+                schedule_entity_id,
+                schedule_label,
+                user_input,
+                selected,
+            )
             if selected != UNMAPPED_SENTINEL:
                 self._moisture_mapping[schedule_entity_id] = selected
             self._mapping_index += 1
@@ -509,6 +527,12 @@ class RachioSupervisorOptionsFlow(config_entries.OptionsFlow):
             option_tokens[label] = entity_id
         if user_input is not None:
             selected = _submitted_field_value(user_input, field_key, option_tokens)
+            _log_moisture_mapping_submission(
+                schedule_entity_id,
+                schedule_label,
+                user_input,
+                selected,
+            )
             if selected != UNMAPPED_SENTINEL:
                 self._moisture_mapping[schedule_entity_id] = selected
             self._mapping_index += 1

@@ -846,10 +846,12 @@ class ConfigFlowBehaviorTests(unittest.TestCase):
         self.assertEqual(prompt["type"], "form")
         self.assertEqual(prompt["step_id"], "moisture_map")
         schema_markers = list(prompt["data_schema"].value.keys())
-        self.assertEqual(schema_markers[0].value, "Pots - Dawn Micro")
+        self.assertEqual(schema_markers[0].value, config_flow.MOISTURE_SENSOR_FIELD)
 
         result = asyncio.run(
-            flow.async_step_moisture_map({"Pots - Dawn Micro": "sensor.moisture_pots"})
+            flow.async_step_moisture_map(
+                {config_flow.MOISTURE_SENSOR_FIELD: "sensor.moisture_pots"}
+            )
         )
         self.assertEqual(result["type"], "create_entry")
         self.assertEqual(
@@ -857,7 +859,7 @@ class ConfigFlowBehaviorTests(unittest.TestCase):
             {"switch.schedule_pots": "sensor.moisture_pots"},
         )
 
-    def test_options_flow_accepts_normalized_schedule_label_submission(self) -> None:
+    def test_options_flow_maps_schedule_with_stable_field_key(self) -> None:
         state_map = {
             "sensor.moisture_boxwoods": SimpleNamespace(
                 attributes={"friendly_name": "Boxwoods Liriopes Moisture"}
@@ -875,7 +877,7 @@ class ConfigFlowBehaviorTests(unittest.TestCase):
 
         result = asyncio.run(
             flow.async_step_moisture_map(
-                {"Boxwood & Liriope Schedule": "sensor.moisture_boxwoods"}
+                {config_flow.MOISTURE_SENSOR_FIELD: "sensor.moisture_boxwoods"}
             )
         )
 
@@ -883,6 +885,93 @@ class ConfigFlowBehaviorTests(unittest.TestCase):
         self.assertEqual(
             result["data"]["schedule_moisture_map"],
             {"switch.schedule_boxwoods": "sensor.moisture_boxwoods"},
+        )
+
+    def test_options_flow_advances_unmapped_schedule(self) -> None:
+        state_map = {
+            "sensor.moisture_boxwoods": SimpleNamespace(
+                attributes={"friendly_name": "Boxwoods Liriopes Moisture"}
+            )
+        }
+        entry = SimpleNamespace(data={"site_name": "Sugarloaf"}, options={})
+        flow = config_flow.RachioSupervisorOptionsFlow(entry)
+        flow.hass = SimpleNamespace(
+            states=SimpleNamespace(get=lambda entity_id: state_map.get(entity_id)),
+            config_entries=SimpleNamespace(async_entries=lambda _domain=None: []),
+        )
+        flow._basic_input = {"moisture_sensor_entities": ["sensor.moisture_boxwoods"]}
+        flow._policy_input = {}
+        flow._schedule_options = [
+            ("switch.schedule_boxwoods", "Boxwood + Liriope"),
+            ("switch.schedule_driveway", "Driveway Hedge"),
+        ]
+
+        result = asyncio.run(
+            flow.async_step_moisture_map(
+                {config_flow.MOISTURE_SENSOR_FIELD: config_flow.UNMAPPED_SENTINEL}
+            )
+        )
+
+        self.assertEqual(result["type"], "form")
+        self.assertEqual(result["step_id"], "moisture_map")
+        self.assertEqual(flow._mapping_index, 1)
+        self.assertEqual(flow._moisture_mapping, {})
+        self.assertEqual(
+            result["description_placeholders"]["schedule_name"],
+            "Driveway Hedge",
+        )
+
+    def test_options_flow_maps_multiple_schedules_with_stable_field_key(self) -> None:
+        state_map = {
+            "sensor.moisture_boxwoods": SimpleNamespace(
+                attributes={"friendly_name": "Boxwoods Liriopes Moisture"}
+            ),
+            "sensor.moisture_driveway": SimpleNamespace(
+                attributes={"friendly_name": "Driveway - South/Hedge Moisture"}
+            ),
+        }
+        entry = SimpleNamespace(data={"site_name": "Sugarloaf"}, options={})
+        flow = config_flow.RachioSupervisorOptionsFlow(entry)
+        flow.hass = SimpleNamespace(
+            states=SimpleNamespace(get=lambda entity_id: state_map.get(entity_id)),
+            config_entries=SimpleNamespace(async_entries=lambda _domain=None: []),
+        )
+        flow._basic_input = {
+            "moisture_sensor_entities": [
+                "sensor.moisture_boxwoods",
+                "sensor.moisture_driveway",
+            ]
+        }
+        flow._policy_input = {}
+        flow._schedule_options = [
+            ("switch.schedule_boxwoods", "Boxwood + Liriope"),
+            ("switch.schedule_driveway", "Driveway Hedge"),
+        ]
+
+        first = asyncio.run(
+            flow.async_step_moisture_map(
+                {config_flow.MOISTURE_SENSOR_FIELD: "sensor.moisture_boxwoods"}
+            )
+        )
+        self.assertEqual(first["type"], "form")
+        self.assertEqual(
+            first["description_placeholders"]["schedule_name"],
+            "Driveway Hedge",
+        )
+
+        result = asyncio.run(
+            flow.async_step_moisture_map(
+                {config_flow.MOISTURE_SENSOR_FIELD: "sensor.moisture_driveway"}
+            )
+        )
+
+        self.assertEqual(result["type"], "create_entry")
+        self.assertEqual(
+            result["data"]["schedule_moisture_map"],
+            {
+                "switch.schedule_boxwoods": "sensor.moisture_boxwoods",
+                "switch.schedule_driveway": "sensor.moisture_driveway",
+            },
         )
 
     def test_options_flow_accepts_label_submission_with_extra_hidden_fields(self) -> None:

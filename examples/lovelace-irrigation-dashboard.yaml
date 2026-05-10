@@ -7,35 +7,52 @@ views:
       - type: grid
         cards:
           - type: heading
-            heading: Watering posture
+            heading: Irrigation status
           - type: entities
-            title: Watering posture
+            title: Irrigation status
             show_header_toggle: false
             entities:
               - entity: sensor.rachio_site_health
+                name: Health
               - entity: sensor.rachio_site_webhook_health
+                name: Webhook
               - entity: sensor.rachio_site_observed_rain_24h
+                name: Rain 24h
               - entity: sensor.rachio_site_catch_up_evidence
+                name: Catch-up
               - entity: sensor.rachio_site_last_catch_up_decision
+                name: Last catch-up
               - entity: sensor.rachio_site_active_flow_alerts
+                name: Flow
               - entity: sensor.rachio_site_recommended_moisture_writes
+                name: Moisture
           - type: markdown
             content: |
-              {% set reason = state_attr('sensor.rachio_site_health', 'supervisor_reason') or 'No runtime explanation available.' %}
+              {% set reason = state_attr('sensor.rachio_site_health', 'supervisor_reason') or 'Runtime posture is not reported yet.' %}
               {% set missing = state_attr('sensor.rachio_site_health', 'missing_inputs') or [] %}
-              **What these mean**
-              - `Health`: overall supervisor runtime integrity
-              - `Webhook health`: whether the HA-managed Rachio webhook still looks valid
+              {{ reason }}{% if missing %} Data warnings: {{ missing | join(', ') }}.{% endif %}
+      - type: grid
+        cards:
+          - type: heading
+            heading: Catch-up / top-up
+          - type: markdown
+            title: Recent decisions
+            content: |
+              {% set rows = [
+                ('Last run', 'sensor.rachio_site_last_run_event'),
+                ('Last skip', 'sensor.rachio_site_last_skip_decision'),
+                ('Last catch-up', 'sensor.rachio_site_last_catch_up_decision'),
+                ('Last reconcile', 'sensor.rachio_site_last_reconciliation')
+              ] %}
+              {% for label, entity in rows %}
+              {% set subject = state_attr(entity, 'subject') or 'Rachio Site' %}
+              {% set brief = state_attr(entity, 'brief') or states(entity) %}
+              {% set at_local = state_attr(entity, 'at_local') %}
+              **{{ label }}**<br>
+              {{ subject }}<br>
+              `{{ brief }}`{% if at_local %} · `{{ at_local }}`{% endif %}
 
-              **Runtime posture**  
-              {{ reason }}
-
-              {% if missing %}
-              **Data warnings**
-              {% for item in missing %}
-              - `{{ item }}`
               {% endfor %}
-              {% endif %}
       - type: grid
         cards:
           - type: heading
@@ -45,83 +62,82 @@ views:
             show_header_toggle: false
             entities:
               - entity: sensor.rachio_site_recommended_moisture_writes
+                name: Recommended writes
               - entity: sensor.rachio_site_ready_moisture_writes
+                name: Ready writes
               - entity: sensor.rachio_site_last_moisture_write
+                name: Last write
           - type: markdown
             content: |
               {% set items = state_attr('sensor.rachio_site_recommended_moisture_writes', 'moisture_review_items') or [] %}
               {% if items %}
               {% for item in items %}
               **{{ item.schedule_name }}**  
-              {{ item.posture_note }} · band: `{{ item.moisture_band }}`{% if item.moisture_write_back_ready == 'ready' %} · `write-back ready`{% endif %}
-              {% if item.mapped_sensor %}Sensor: `{{ item.mapped_sensor }}`{% endif %}
+              {{ item.posture_note }} · `{{ item.moisture_band }}` · `{{ item.review_state }}`{% if item.moisture_write_back_ready %} · `{{ item.moisture_write_back_ready }}`{% endif %}
+              {% if item.recommended_action %}{{ item.recommended_action }}{% endif %}
 
               {% endfor %}
               {% else %}
               No mapped schedule moisture review items yet.
               {% endif %}
 
-              **Manual review contract**
-
-              - `Recommended` means review this schedule now.
-              - `Ready` means a manual write to Rachio can be issued now.
-              - `Written` or `Rejected` means there is audit history.
-
-              Rear Protea Shade Bed stays conservative: `Moisture watch`, `No default boost`, `Avoid saturation`.
+              Writes are manual. No automatic top-up watering.
       - type: grid
         cards:
           - type: heading
-            heading: Catch-up / top-up outlook
-          - type: markdown
-            title: Recent decisions
-            content: |
-              {% set rows = [
-                ('Last event', 'sensor.rachio_site_last_event'),
-                ('Last run event', 'sensor.rachio_site_last_run_event'),
-                ('Last skip decision', 'sensor.rachio_site_last_skip_decision'),
-                ('Last reconciliation', 'sensor.rachio_site_last_reconciliation'),
-                ('Last catch-up decision', 'sensor.rachio_site_last_catch_up_decision')
-              ] %}
-              {% for label, entity in rows %}
-              {% set subject = state_attr(entity, 'subject') or label %}
-              {% set brief = state_attr(entity, 'brief') or states(entity) %}
-              {% set at_local = state_attr(entity, 'at_local') or 'none' %}
-              **{{ label }}**  
-              {{ subject }}  
-              `{{ brief }}` at `{{ at_local }}`
-
-              {% endfor %}
-      - type: grid
-        cards:
-          - type: heading
-            heading: Flow alert review
+            heading: Flow review
           - type: entities
-            title: Flow alert review
+            title: Flow review
             show_header_toggle: false
             entities:
               - entity: sensor.rachio_site_active_flow_alerts
+                name: Active alerts
               - entity: sensor.rachio_site_flow_alert_queue
+                name: Review queue
               - entity: sensor.rachio_site_last_flow_alert_decision
+                name: Last decision
           - type: markdown
             content: |
-              `Normal after calibration` is only eligible to clear after the post-alert calibration remains close to the prior baseline. Clearing this review item does not necessarily clear the native Rachio alert.
+              {% set alerts = state_attr('sensor.rachio_site_active_flow_alerts', 'flow_alerts') or [] %}
+              {% if alerts %}
+              {% for alert in alerts %}
+              **{{ alert.zone_name or alert.subject or 'Flow alert' }}**<br>
+              `{{ alert.status }}`{% if alert.delta_percent is defined %} · {{ alert.delta_percent }}% baseline delta{% endif %}<br>
+              {{ alert.recommended_action or 'Review calibration before clearing.' }}
+
+              {% endfor %}
+              {% else %}
+              No flow alerts needing review.
+              {% endif %}
       - type: grid
         cards:
           - type: heading
-            heading: Schedule review
+            heading: Schedule detail
           - type: markdown
             content: |
-              **Keep moisture secondary in schedule detail**
-
-              Show only the mapped sensor, the current band, and a short posture note inside each zone or schedule card.
-
-              Recommended short labels:
-
-              - `Top sensor candidate`
-              - `Write-back ready`
-              - `Moisture watch`
-              - `No default boost`
-              - `Avoid saturation`
-
-              Do not promote raw moisture percentages or per-zone telemetry charts into the first viewport.
+              {% set items = state_attr('sensor.rachio_site_recommended_moisture_writes', 'moisture_review_items') or [] %}
+              {% if items %}
+              | Schedule | Band | Review | Write-back |
+              | --- | --- | --- | --- |
+              {% for item in items %}
+              | {{ item.schedule_name }} | {{ item.moisture_band }} | {{ item.review_state }} | {{ item.moisture_write_back_ready }} |
+              {% endfor %}
+              {% else %}
+              Schedule moisture detail appears after candidate sensors are mapped.
+              {% endif %}
+      - type: grid
+        cards:
+          - type: heading
+            heading: Audit
+          - type: entities
+            title: Audit
+            show_header_toggle: false
+            entities:
+              - entity: sensor.rachio_site_last_event
+              - entity: sensor.rachio_site_last_run_event
+              - entity: sensor.rachio_site_last_skip_decision
+              - entity: sensor.rachio_site_last_reconciliation
+              - entity: sensor.rachio_site_recommended_moisture_queue
+              - entity: sensor.rachio_site_moisture_write_queue
+              - entity: sensor.rachio_site_flow_alert_queue
 cards: []

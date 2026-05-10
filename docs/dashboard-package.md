@@ -59,11 +59,12 @@ dashboard is carrying too much low-value detail.
 
 The accepted live shadow layout is intentionally short:
 
-1. Watering posture
-2. Moisture drift
-3. Catch-up / top-up outlook
-4. Flow alert review
-5. Schedule review
+1. Irrigation status
+2. Catch-up / top-up
+3. Moisture drift
+4. Flow review
+5. Schedule detail
+6. Audit
 
 Freshness and parity diagnostics still matter, but they should not displace the
 operator decision rail in the first viewport. Keep them as follow-on cards or a
@@ -80,7 +81,7 @@ The first viewport should stay simple:
 - `Last catch-up decision`
 - `Active flow alerts`
 - `Recommended moisture writes`
-- one compact moisture review card below the posture rail
+- one plain-English posture line with runtime reason and data warnings
 
 Keep lower-value diagnostics such as linked entry titles, raw bookkeeping, and
 parity-only duplication below the fold.
@@ -94,7 +95,9 @@ future-looking abstraction. Today that means:
 - the dashboard is a dedicated `Shadow` view
 - the layout is section-led, not card-mosaic-led
 - moisture stays review-oriented and manual-first
+- mapped moisture state is visible even when recommended write count is zero
 - flow alerts remain visibly gated until explicitly cleared
+- raw decision strings live in `Audit`, not in the first scan path
 
 The current accepted screenshot lives at:
 

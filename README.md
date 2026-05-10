@@ -178,9 +178,10 @@ real Home Assistant instance without forcing optional inputs too early.
 - if no moisture sensors are selected, the flow skips the schedule moisture
   mapping step entirely and stores an empty explicit mapping instead of showing
   an empty form
-- when moisture mapping is required, the live schedule name is also used as the
-  field label so operators can see which schedule they are mapping inside the
-  options modal itself
+- when moisture mapping is required, the form uses one stable
+  `moisture_sensor_entity` field and shows the live schedule name in the step
+  description; this avoids Home Assistant options-flow handoff failures caused
+  by dynamic human schedule names as field keys
 - the optional rain selector no longer injects an invalid blank entity id as a
   default
 
