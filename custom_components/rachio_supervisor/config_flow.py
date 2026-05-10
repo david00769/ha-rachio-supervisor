@@ -14,6 +14,7 @@ from homeassistant.util import slugify
 from .const import (
     CONF_ALLOW_MOISTURE_WRITE_BACK,
     CONF_AUTO_CATCH_UP_SCHEDULES,
+    CONF_AUTO_MOISTURE_WRITE_SCHEDULES,
     CONF_AUTO_MISSED_RUN_SCHEDULES,
     CONF_ENABLE_PERSISTENT_NOTIFICATIONS,
     CONF_HEALTH_RECONCILE_HOUR,
@@ -28,6 +29,7 @@ from .const import (
     CONF_ZONE_COUNT,
     DEFAULT_ALLOW_MOISTURE_WRITE_BACK,
     DEFAULT_AUTO_CATCH_UP_SCHEDULES,
+    DEFAULT_AUTO_MOISTURE_WRITE_SCHEDULES,
     DEFAULT_AUTO_MISSED_RUN_SCHEDULES,
     DEFAULT_ENABLE_PERSISTENT_NOTIFICATIONS,
     DEFAULT_HEALTH_RECONCILE_HOUR,
@@ -211,7 +213,7 @@ def _flow_schema(
             default=rain_default,
         )
     schema[rain_marker] = selector.EntitySelector(
-        selector.EntitySelectorConfig(domain="sensor", multiple=False)
+        selector.EntitySelectorConfig(domain=["sensor", "weather"], multiple=False)
     )
 
     return vol.Schema(schema)
@@ -246,6 +248,22 @@ def _policy_schema(
                 default=defaults.get(
                     CONF_AUTO_MISSED_RUN_SCHEDULES,
                     DEFAULT_AUTO_MISSED_RUN_SCHEDULES,
+                ),
+            ): selector.SelectSelector(
+                selector.SelectSelectorConfig(
+                    options=[
+                        selector.SelectOptionDict(value=value, label=label)
+                        for value, label in schedule_options
+                    ],
+                    multiple=True,
+                    mode=selector.SelectSelectorMode.DROPDOWN,
+                )
+            ),
+            vol.Required(
+                CONF_AUTO_MOISTURE_WRITE_SCHEDULES,
+                default=defaults.get(
+                    CONF_AUTO_MOISTURE_WRITE_SCHEDULES,
+                    DEFAULT_AUTO_MOISTURE_WRITE_SCHEDULES,
                 ),
             ): selector.SelectSelector(
                 selector.SelectSelectorConfig(
@@ -302,6 +320,10 @@ class RachioSupervisorConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 ),
                 CONF_AUTO_MISSED_RUN_SCHEDULES: user_input.get(
                     CONF_AUTO_MISSED_RUN_SCHEDULES,
+                    [],
+                ),
+                CONF_AUTO_MOISTURE_WRITE_SCHEDULES: user_input.get(
+                    CONF_AUTO_MOISTURE_WRITE_SCHEDULES,
                     [],
                 ),
             }
@@ -473,6 +495,10 @@ class RachioSupervisorOptionsFlow(config_entries.OptionsFlow):
                 ),
                 CONF_AUTO_MISSED_RUN_SCHEDULES: user_input.get(
                     CONF_AUTO_MISSED_RUN_SCHEDULES,
+                    [],
+                ),
+                CONF_AUTO_MOISTURE_WRITE_SCHEDULES: user_input.get(
+                    CONF_AUTO_MOISTURE_WRITE_SCHEDULES,
                     [],
                 ),
             }

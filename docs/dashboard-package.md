@@ -15,15 +15,14 @@ It is not a dashboard builder.
 Using the frontend-skill standard:
 
 Visual thesis:
-- quiet control-room utility with one dominant decision rail, muted diagnostic
-  context, and a single accent color reserved for states that need human
-  action
+- Rachio-app-like yard control: zone photos first, icon badges second, and
+  Supervisor state layered on top only when it changes an operator decision
 
 Content plan:
-- current watering posture first
-- then the next operator decision
-- then the evidence that explains that decision
-- then deeper schedule detail
+- zone photo grid first
+- then weather/skip and next-run posture
+- then moisture and flow review
+- then raw audit detail
 
 Interaction thesis:
 - the first viewport should answer "do I need to do anything now?"
@@ -31,6 +30,8 @@ Interaction thesis:
   is available
 - schedule detail should stay below the decision rail so the dashboard never
   feels like a spreadsheet first
+- zone cards should use photos, icons, compact badges, and short labels instead
+  of sentence-heavy explanations
 
 Health contract:
 - `Health` is runtime integrity only
@@ -57,14 +58,15 @@ dashboard is carrying too much low-value detail.
 
 ## Recommended sections
 
-The accepted live shadow layout is intentionally short:
+The accepted shadow layout is zone-first, with four follow-on operator
+sections. Each section owns one job so the same fact is not repeated in
+multiple places.
 
-1. Irrigation status
-2. Catch-up / top-up
-3. Moisture drift
-4. Moisture actions, only when manual write-back is intentionally exposed
-5. Flow review
-6. Audit
+1. Zones
+2. Weather / skips
+3. Moisture
+4. Flow
+5. Audit
 
 Freshness and parity diagnostics still matter, but they should not displace the
 operator decision rail in the first viewport. Keep them as follow-on cards or a
@@ -82,7 +84,8 @@ remain as a second permanent page with duplicated facts.
 The intended relationship is:
 
 - during shadow, use the separate view to compare old and new behavior
-- during cutover, promote the accepted plugin-backed sections into the
+- during cutover, promote the accepted plugin-backed zone and Supervisor
+  sections into the
   production irrigation dashboard
 - after cutover, keep only a small audit/diagnostic appendix for raw entity
   detail
@@ -94,17 +97,137 @@ The intended relationship is:
 
 The first viewport should stay simple:
 
+- zone photos
 - `Health`
 - `Webhook health`
-- `Observed rain, 24h`
-- `Catch-up evidence`
-- `Last catch-up decision`
-- `Active flow alerts`
-- `Recommended moisture writes`
-- one plain-English posture line with runtime reason and data warnings
+- active/running count
+- rain/skip badge
+- moisture badge
+- flow-alert badge
+- quick-run affordance on each live zone card
 
 Keep lower-value diagnostics such as linked entry titles, raw bookkeeping, and
 parity-only duplication below the fold.
+
+## Zone-first layout
+
+The UI should feel closer to the Rachio phone app than to a Home Assistant
+diagnostic panel:
+
+- one picture per zone
+- one compact zone name
+- icon badges for water/skip, Supervisor, and moisture
+- next run shown as a short token when HA/Rachio exposes it
+- quick run exposed as a confirmation-gated action on real live zone cards
+- plant/soil/drip/slope notes kept to one small line or a lower detail panel
+
+The Rachio app model separates Events, Zones, and Schedules. Rachio describes
+Events as the place for weather, watering adjustments, and water usage; Zones
+as the place for yard images/details; and Schedules as the place for schedule
+and upcoming calendar context:
+
+<https://rachio.com/blog/rachio-app-changes>
+
+The Supervisor dashboard uses the same mental model: zones are the primary
+surface, weather and schedule evidence explain the zone badges, and raw audit
+detail stays below the operator controls.
+
+The integration ships the `rachio-supervisor-zone-grid-card` Lovelace module
+for this purpose. Add this dashboard resource:
+
+`/rachio_supervisor/rachio-supervisor-zone-grid-card.js`
+
+Resource type:
+
+`JavaScript module`
+
+Then use:
+
+```yaml
+type: custom:rachio-supervisor-zone-grid-card
+entity: sensor.rachio_site_zone_overview
+title: Zones
+```
+
+The card also reads these site-level Supervisor entities by default:
+
+- `sensor.rachio_site_health`
+- `sensor.rachio_site_webhook_health`
+- `sensor.rachio_site_catch_up_evidence`
+- `sensor.rachio_site_recommended_moisture_writes`
+- `sensor.rachio_site_active_flow_alerts`
+
+If a site uses different entity ids, override them with `health_entity`,
+`webhook_entity`, `catch_up_entity`, `moisture_entity`, and `flow_entity`.
+
+The card reads `sensor.rachio_site_zone_overview`. Its `zones` attribute
+includes:
+
+- `zone_name`
+- `schedule_entity_id`
+- `zone_entity_id`
+- `image_path`
+- `fallback_image_path`
+- `quick_run_minutes`
+- `next_run`
+- `watering_days`
+- `last_run_at`
+- `last_skip_at`
+- `rain_skip_state`
+- `water_badge`
+- `supervisor_badge`
+- `moisture_band`
+- `flow_alert_state`
+- `plant_note`
+- `detail_note`
+
+Use real zone photos at:
+
+`/local/rachio-supervisor/zones/<zone-slug>.jpg`
+
+Fallback photo:
+
+`/local/rachio-supervisor/zones/default.jpg`
+
+The packaged card uses the real `zone_entity_id` or `schedule_entity_id` from
+the overview payload when it calls `rachio_supervisor.quick_run_zone`.
+Quick Run is manual only, editable per click, and confirmation-gated. It calls
+Home Assistant's existing Rachio watering service through the Supervisor
+service; it does not enable catch-up, moisture auto-write, or any broader
+autonomous watering policy.
+
+Normal states should be quiet. The card intentionally shortens healthy labels
+such as `rain`, `flow`, and `ok`, while abnormal states use stronger words such
+as `skip`, `review`, `alert`, `moisture`, or `catch-up`. Full details remain in
+the badge title, detail drawer, and Audit section.
+
+The Supervisor overlay follows the same rule. It is a thin strip above the zone
+grid, not a replacement for the zone UI. Healthy state renders as a quiet
+single-line status. The detailed status pills appear only when the overlay has
+something to explain, and only the relevant pills are shown. It becomes
+visually stronger only for:
+
+- runtime health or webhook degradation
+- active catch-up/top-up review
+- recommended moisture writes
+- active flow alert review
+- data warnings such as missing optional rain or moisture inputs
+
+A built-in-only Markdown fallback can still be built from the same entity
+payload, but it is visually inferior and should not be treated as the canonical
+upstream dashboard.
+
+Rain evidence should keep two labels distinct:
+
+- `Observed rain, 24h` is the Rachio skip-event evidence parsed from event
+  history
+- `Actual rain` is the selected Home Assistant observed-rain source, with
+  `window` and `confidence` attributes explaining whether the number is rolling
+  24h, today, since 9am, or another source-specific total
+
+If the selected source is a forecast-only weather entity, the dashboard should
+show a data warning instead of silently treating forecast precipitation as rain
+that already fell.
 
 ## Accepted live shadow layout
 
@@ -112,13 +235,22 @@ The repository example should match the accepted live shadow view, not a
 future-looking abstraction. Today that means:
 
 - the primary entity surface is `sensor.rachio_site_*`
-- the dashboard is a dedicated `Shadow` view
-- the layout is section-led, not card-mosaic-led
-- moisture stays review-oriented and manual-first
+- the dashboard is a dedicated `Irrigation` view
+- the layout is zone-led through the packaged custom card, with Supervisor
+  diagnostics pushed below the visual operating surface
+- moisture stays review-oriented, with manual actions visible and auto-write
+  requiring explicit per-schedule opt-in
 - mapped moisture state is visible even when recommended write count is zero
 - manual moisture write actions are confirmation-gated and do not start watering
+- packaged manual actions use generic services (`write_recommended_moisture_now`
+  and `acknowledge_all_recommendations`) so the upstream example is usable
+  without fake schedule-name placeholders
+- opt-in moisture auto-write is shown as schedule policy and status; it updates
+  Rachio moisture estimates only and never starts watering
 - flow alerts remain visibly gated until explicitly cleared
 - raw decision strings live in `Audit`, not in the first scan path
+- the primary surface is photo-led and icon-led; explanatory text belongs in
+  zone detail drawers or Audit, not in the tile body
 
 The current accepted screenshot lives at:
 
@@ -139,9 +271,12 @@ Strengths:
 Remaining issues:
 
 - raw `Recent decisions` entities were too dense for first-scan use when values
-  were long, so the accepted contract now uses a templated markdown summary
-  fed by compact `subject` / `brief` / `at_local` attributes
-- the decision rail is split across too many adjacent cards for a narrow screen
+  were long, so the accepted contract now uses card-owned summaries fed by
+  compact `subject` / `brief` / `at_local` attributes
+- moisture recommendations used to show only a count; the accepted contract now
+  shows `HA sensor -> Rachio zone moisture` before any write action
+- the decision rail should stay self-contained inside the four operator cards
+  rather than becoming a scattered card mosaic
 - queue and audit context should stay below the posture rail unless non-zero
 - parity comparison should be a shadow-only appendix, not a permanent operator
   surface
@@ -154,15 +289,17 @@ cutover, rather than treating the first live shadow view as finished.
 
 ## Decision rail design
 
-The key operator rail should be a small set of decision tiles, not a large card
+The key operator rail should be four self-contained cards, not a large card
 grid:
 
-- `Catch-up evidence`
-- `Last catch-up decision`
-- `Recommended moisture writes`
-- `Recommended moisture queue`
-- `Active flow alerts`
-- `Last flow alert decision`
+- `Catch-up / top-up` owns rain skip, heat/top-up posture, last run/skip, and
+  catch-up actions
+- `Moisture drift` owns mapped moisture state, `HA sensor -> Rachio` write
+  summaries, manual write buttons, and auto-write status
+- `Flow review` owns the 7-day flow alert queue, calibration evidence, baseline
+  deltas, and clear-review actions
+- `Rachio Supervisor` owns runtime health, webhook health, data warnings, and
+  the compact running log
 
 This rail is where future optional alerting should anchor. Alerts should follow
 the same priorities:
@@ -222,9 +359,29 @@ The operator contract should stay explicit:
 
 - `Recommended` = review this schedule now
 - `Ready` = a manual write can be issued now
-- `Written` / `Rejected` = audit trail from the last manual write attempt
+- `Auto` = schedule is off, watching, eligible, or blocked for auto-write
+- `Written` / `Rejected` / `Auto written` / `Auto skipped` = audit trail from
+  the last write attempt
 
 Do not treat moisture drift as automatic top-up watering in v1.
+
+Opt-in moisture auto-write is allowed in v1, but it is deliberately narrower
+than watering automation:
+
+- off by default
+- enabled per schedule
+- requires global moisture write-back mode
+- writes only the current mapped HA moisture percentage into Rachio
+- uses a same-value cooldown
+- records the last write result for audit
+
+The UI must show what changes before exposing a write action:
+
+- `HA sensor 13% -> Rachio not reported`
+- `Sensor 13% -> Rachio zone moisture`
+
+If the Rachio public API does not expose the current zone moisture estimate,
+the dashboard must say `not reported` instead of inventing a comparison.
 
 Even when recommended writes are `0`, the dashboard should still show the
 mapped review list with:
@@ -309,7 +466,8 @@ useful even when:
 
 - no moisture sensors are mapped yet
 - no actual-rain entity is selected yet
-- automatic catch-up remains disabled for every schedule
+- automatic catch-up remains disabled for every schedule, or is enabled only for
+  the specific schedules selected during cutover
 
 ## Shadow dashboard posture
 
@@ -327,10 +485,26 @@ operator model before production cutover. That means:
 - when the plugin-backed sections prove out, move those sections into the
   production irrigation dashboard and retire the old-script cards
 
+## Cron cutover checklist
+
+When replacing an old cron-published supervisor, use the dashboard as a cutover
+gate before pausing the cron runner:
+
+1. Reload the custom integration and confirm `Health`, `Webhook health`, `Last
+   reconciliation`, `Catch-up evidence`, and `Last catch-up decision` are fresh.
+2. Confirm the zone grid card loads from
+   `/rachio_supervisor/rachio-supervisor-zone-grid-card.js`.
+3. Select only reviewed schedules for automatic catch-up.
+4. Disable `observe_first` only after the selected schedules resolve to the
+   intended zone entities.
+5. Run `rachio_supervisor.evaluate_now`.
+6. Pause the old cron automation once the plugin-backed integration is healthy
+   and publishing catch-up decision state.
+
 ## Shadow comparison note
 
-For a real cutover, do not jump directly from the old Codex-published sensors to
-the new generic site-level tiles.
+For a conservative cutover, do not jump directly from the old Codex-published
+sensors to the new generic site-level tiles.
 
 Start with a parallel shadow view that places these old and new surfaces next to
 each other:

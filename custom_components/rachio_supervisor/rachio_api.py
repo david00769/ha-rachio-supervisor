@@ -15,6 +15,7 @@ DEVICE_EVENTS_URL = (
     "https://api.rach.io/1/public/device/{device_id}/event"
     "?startTime={start_ms}&endTime={end_ms}"
 )
+DEVICE_FORECAST_URL = "https://api.rach.io/1/public/device/{device_id}/forecast?units={units}"
 DEVICE_WEBHOOKS_URL = "https://api.rach.io/1/public/notification/{device_id}/webhook"
 
 
@@ -90,6 +91,13 @@ class RachioClient:
             DEVICE_EVENTS_URL.format(device_id=device_id, start_ms=start_ms, end_ms=end_ms)
         )
         return data if isinstance(data, list) else []
+
+    def get_device_forecast(self, device_id: str, *, units: str = "METRIC") -> dict[str, Any]:
+        """Return Rachio's current/predicted forecast payload for diagnostics."""
+        data = self._http_json(
+            DEVICE_FORECAST_URL.format(device_id=device_id, units=units)
+        )
+        return data if isinstance(data, dict) else {}
 
     def set_zone_moisture_percent(self, zone_id: str, moisture_percent: float) -> None:
         """Write a moisture percentage into a Rachio zone."""

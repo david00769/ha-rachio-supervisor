@@ -28,3 +28,15 @@
 - Added site-level compact moisture review payloads so mapped schedules remain visible in the dashboard even when recommended moisture writes are `0`.
 - Added compact decision attributes (`subject`, `brief`, `at_local`) for recent-decision dashboard rendering and updated the recommended Lovelace example to use built-in markdown cards instead of raw long-string entities in the first viewport.
 - Fixed the per-schedule moisture-mapping step so the active schedule name is visible directly in the mapping field label instead of relying on hidden description copy.
+- Added the fifteenth runtime milestone: moisture review items now show the proposed write contract (`HA sensor -> Rachio zone moisture`), rain actuals reject forecast-only weather entities with plain-English data warnings, flow review uses a 7-day inspection window, and schedule-level opt-in moisture auto-write can update Rachio moisture estimates without starting watering.
+- Redesigned the recommended shadow dashboard around the new 4+1 card model: Rachio Supervisor, Catch-up / top-up, Moisture drift, Flow review, and Audit.
+- Added observed-rain source discovery and richer rain-source metadata: configured actual-rain sources now expose status, reason, reporting window, confidence, likely HA rain-source candidates, and diagnostic-only Rachio weather/forecast hints.
+- Added generic dashboard-safe services for `write_recommended_moisture_now` and `acknowledge_all_recommendations`, and removed fake schedule-name placeholders from the packaged Lovelace example.
+- Reworked the recommended dashboard toward a Rachio-app-style zone-first UI: zone photos, compact icon badges, and visual weather/moisture/flow sections instead of text-heavy Supervisor cards.
+- Added a `Zone overview` sensor payload plus a confirmation-gated `quick_run_zone` service so the dashboard can attach real per-zone Quick Run buttons from stable entity ids.
+- Added the packaged `rachio-supervisor-zone-grid-card` Lovelace module, served by the integration, for photo-first zone cards with day chips, compact rain/moisture/flow/Supervisor badges, editable Quick Run minutes, and a low-noise detail drawer.
+- Added the cron-cutover runtime path: automatic weather-skip catch-up now uses
+  Home Assistant's `rachio.start_watering` service with an integer minute
+  duration, and `rachio_supervisor.run_catch_up_now` can execute the current
+  confirmed catch-up candidate as an explicit operator action using the same
+  safety checks and duplicate lockout.

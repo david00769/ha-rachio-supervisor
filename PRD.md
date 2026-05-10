@@ -116,10 +116,17 @@ Allowed automatic action classes in v1:
 - catch-up watering after verified inadequate watering / skip conditions
 - optional write-back of moisture state into Rachio
 
+Allowed manual action classes in v1:
+
+- per-zone Quick Run with explicit operator confirmation and bounded duration
+
 Explicitly not in v1:
 
 - broad autonomous watering independent of Rachio schedule posture
 - a generalized top-up engine that replaces schedule ownership
+- treating forecast-only weather conditions as observed rainfall
+- treating Rachio forecast payloads as actual rainfall unless the API returns a
+  clearly observed historical rainfall total
 
 ### Safety model
 
@@ -163,8 +170,10 @@ Trend context:
 Moisture write-back:
 
 - optional
-- zone-level opt-in
+- manual write service available when write-back mode is enabled
+- schedule-level opt-in for automatic write-back
 - not the primary control model
+- updates Rachio's moisture estimate only; it does not start watering
 
 Dashboard stance:
 
@@ -174,6 +183,8 @@ Dashboard stance:
   action
 - no automatic top-up watering is implied by the mere existence of a moisture
   sensor
+- opt-in auto-write may write the mapped HA moisture percentage into Rachio for
+  selected schedules, with audit history and cooldowns
 
 ### Rain / evidence model
 
@@ -190,7 +201,9 @@ Authority split:
 
 Accepted v1 actual-rain source:
 
-- any Home Assistant rainfall entity chosen by the user
+- any numeric Home Assistant observed-rain entity chosen by the user
+- a Home Assistant weather entity only when it exposes a numeric observed
+  rainfall or precipitation total
 
 Forecast integrations are not the core story in v1. The important distinction
 is:
@@ -251,19 +264,34 @@ Primary operator questions:
 
 Frontend-skill direction:
 
-- visual thesis: quiet control-room utility with one dominant review rail
-- content plan: posture first, then decision, then evidence, then schedule
-  detail
-- interaction thesis: first viewport answers whether operator action is needed,
-  and healthy review bands collapse by default
+- visual thesis: calm yard-control surface with zone photography as the
+  dominant UI and Supervisor state layered on as compact badges
+- content plan: zones first, then weather/skip, moisture, flow, and audit
+- interaction thesis: tap or open zone detail for deeper context, edit Quick
+  Run minutes inline, and confirmation-gate watering/write actions
 
 The dashboard should stay simple enough that:
 
-- first viewport = posture and decisions
+- first viewport = zone photos, next-run/skip/moisture/flow badges, and manual
+  Quick Run affordances
 - second layer = evidence
 - lower layer = full schedule detail
 
-It should not feel like a generic card wall or a zone spreadsheet first.
+It should not feel like a generic card wall, a zone spreadsheet, or a text
+audit surface first.
+
+The current operator model is a zone-first dashboard with four follow-on
+sections:
+
+1. `Zones` for photos, zone names, day chips, next run, compact status badges,
+   plant notes, detail drawers, and confirmation-gated Quick Run
+2. `Weather` for rain skip, actual observed rain, and catch-up/top-up posture
+3. `Moisture` for mapped sensor state, `HA sensor -> Rachio` write summaries,
+   manual write, and auto-write status
+4. `Flow` for the 7-day flow alert queue, calibration evidence, baseline delta,
+   and clear-review action
+5. `Audit` for health, webhook state, raw strings, queues, parity detail, and
+   full evidence
 
 For moisture specifically:
 
@@ -382,6 +410,8 @@ The first irrigation workspace should help an operator answer:
 v1 ships with:
 
 - one recommended Lovelace dashboard package
+- one lightweight custom Lovelace card, `rachio-supervisor-zone-grid-card`,
+  served by the integration for the photo-led zone grid
 
 v1 does not ship:
 
@@ -390,8 +420,9 @@ v1 does not ship:
 
 The dashboard package should include:
 
-- current site status
-- zone list with reasons
+- photo-led zone grid with compact badges
+- editable, confirmation-gated per-zone Quick Run
+- current site status in Audit and as zone/weather/moisture/flow badges
 - moisture + rain context
 - review queue / actions
 
@@ -468,6 +499,23 @@ Initial success should be judged by:
 - webhook/API data goes stale and degraded health is visible immediately
 - moisture write-back is enabled and writes to Rachio without broader autonomous
   control
+- moisture auto-write is off by default, runs only for explicitly enabled
+  schedules, and records written/skipped/rejected results
+- forecast-only weather entities are rejected as observed-rain sources with a
+  data warning
+- observed-rain diagnostics expose reporting window and confidence, so sources
+  such as local 24h gauges, daily totals, `rain_since_9am`, and Weather
+  Underground-style `precipTotal` are not misrepresented as the same kind of
+  measurement
+- Rachio weather-source/forecast hints are collected for diagnostics only and
+  do not drive actual-rain decisions
+- dashboard package actions call real generic services for writing current
+  recommendations and acknowledging current recommendations; packaged examples
+  do not ship fake schedule-name placeholders
+- zone overview payload exposes image paths, zone ids, compact badges, quick-run
+  defaults, and next-run hints so dashboards can be visual and zone-first
+- per-zone Quick Run calls the existing Home Assistant Rachio watering service
+  only after an explicit operator action
 - missing or noisy moisture entities degrade gracefully
 - the dashboard package renders cleanly on phone and tablet
 
@@ -497,6 +545,7 @@ The first real functional milestone should add:
 - diagnostic payloads
 - service registration
 - catch-up evaluation path
+- cron-replacement cutover path with opt-in catch-up execution
 - moisture write-back wiring
 
 ## Future Roadmap

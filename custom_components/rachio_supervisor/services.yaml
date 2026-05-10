@@ -5,9 +5,63 @@ evaluate_now:
     entity:
       integration: rachio_supervisor
 
+run_catch_up_now:
+  name: Run catch-up now
+  description: Run the current confirmed catch-up candidate for one site as an explicit operator action. This uses the same safety checks and duplicate lockout as automatic supervision.
+  fields:
+    site_name:
+      name: Site name
+      description: Optional site label to disambiguate duplicate loaded Rachio Supervisor entries.
+      required: false
+      selector:
+        text:
+
+quick_run_zone:
+  name: Quick run zone
+  description: Start one resolved Rachio zone for a bounded manual run. This is an explicit operator action and is not used by automatic Supervisor policy.
+  fields:
+    zone_entity_id:
+      name: Zone entity
+      description: Preferred target when a dashboard card is tied directly to a Rachio zone switch.
+      required: false
+      selector:
+        entity:
+          domain: switch
+    schedule_entity_id:
+      name: Schedule entity
+      description: Stable schedule target when the Supervisor can resolve the matching zone.
+      required: false
+      selector:
+        entity:
+          integration: rachio_supervisor
+          domain: sensor
+    schedule_name:
+      name: Schedule name
+      description: Fallback target when entity ids are not supplied.
+      required: false
+      selector:
+        text:
+    duration_minutes:
+      name: Duration
+      description: Manual run duration in minutes.
+      required: false
+      default: 3
+      selector:
+        number:
+          min: 1
+          max: 60
+          mode: box
+          unit_of_measurement: min
+    site_name:
+      name: Site name
+      description: Optional site label to disambiguate duplicate loaded Rachio Supervisor entries.
+      required: false
+      selector:
+        text:
+
 write_moisture_now:
   name: Write moisture now
-  description: Write the currently mapped moisture value into the resolved Rachio zone for one schedule.
+  description: Write the currently mapped Home Assistant moisture value into the resolved Rachio zone for one schedule. This updates Rachio's moisture estimate; it does not start watering.
   fields:
     schedule_entity_id:
       name: Schedule entity
@@ -26,6 +80,17 @@ write_moisture_now:
     site_name:
       name: Site name
       description: Optional site label to disambiguate duplicate schedule names across entries.
+      required: false
+      selector:
+        text:
+
+write_recommended_moisture_now:
+  name: Write recommended moisture now
+  description: Write all currently recommended and ready Home Assistant moisture values into their resolved Rachio zones for one site. This updates Rachio moisture estimates; it does not start watering.
+  fields:
+    site_name:
+      name: Site name
+      description: Optional site label to disambiguate duplicate loaded Rachio Supervisor entries.
       required: false
       selector:
         text:
@@ -51,6 +116,17 @@ acknowledge_recommendation:
     site_name:
       name: Site name
       description: Optional site label to disambiguate duplicate schedule names across entries.
+      required: false
+      selector:
+        text:
+
+acknowledge_all_recommendations:
+  name: Acknowledge all recommendations
+  description: Mark all currently pending schedule recommendations as reviewed for one site in the current runtime session.
+  fields:
+    site_name:
+      name: Site name
+      description: Optional site label to disambiguate duplicate loaded Rachio Supervisor entries.
       required: false
       selector:
         text:

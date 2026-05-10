@@ -33,6 +33,7 @@ SITE_SENSOR_NAMES = {
     "last_skip_decision": "Last skip decision",
     "active_zone_count": "Active zones",
     "configured_zone_count": "Configured zones",
+    "zone_overview": "Zone overview",
     "last_reconciliation": "Last reconciliation",
     "last_refresh": "Last refresh",
     "last_moisture_write": "Last moisture write",
@@ -203,6 +204,11 @@ DESCRIPTIONS = (
         key="configured_zone_count",
         translation_key="configured_zone_count",
         value_fn=lambda data: str(data.configured_zone_count),
+    ),
+    RachioSupervisorSensorDescription(
+        key="zone_overview",
+        translation_key="zone_overview",
+        value_fn=lambda data: str(len(data.zone_overview_items)),
     ),
     RachioSupervisorSensorDescription(
         key="last_reconciliation",
@@ -394,7 +400,18 @@ class RachioSupervisorSensor(RachioSupervisorEntity, SensorEntity):
             return {
                 "unit_of_measurement": data.actual_rain_unit,
                 "status": data.rain_actuals_status,
+                "reason": data.rain_actuals_reason,
+                "window": data.rain_actuals_window,
+                "confidence": data.rain_actuals_confidence,
                 "source_entity": data.rain_actuals_entity,
+                "candidate_sources": list(data.rain_source_candidates),
+                "rachio_weather_probe": data.rachio_weather_probe,
+            }
+        if self.entity_description.key == "zone_overview":
+            return {
+                "zones": list(data.zone_overview_items),
+                "image_path_convention": "/local/rachio-supervisor/zones/<zone-slug>.jpg",
+                "quick_run_service": "rachio_supervisor.quick_run_zone",
             }
         if self.entity_description.key == "observed_rain_24h":
             attrs = {
@@ -550,7 +567,9 @@ class RachioSupervisorSensor(RachioSupervisorEntity, SensorEntity):
                         "baseline_before_lpm": alert.baseline_before_lpm,
                         "baseline_after_lpm": alert.baseline_after_lpm,
                         "baseline_delta_percent": alert.baseline_delta_percent,
+                        "delta_percent": alert.baseline_delta_percent,
                         "calibration_at": alert.calibration_at,
+                        "last_checked_at": data.last_reconciliation,
                         "review_state": alert.review_state,
                         "summary": alert.summary,
                     }
@@ -617,6 +636,13 @@ class RachioSupervisorScheduleSensor(RachioSupervisorEntity, SensorEntity):
             "moisture_value": schedule.moisture_value,
             "moisture_status": schedule.moisture_status,
             "moisture_last_updated": schedule.moisture_last_updated,
+            "sensor_value": schedule.moisture_value,
+            "rachio_moisture_value": schedule.rachio_moisture_value or "not_reported",
+            "write_value": schedule.write_value,
+            "write_summary": schedule.write_summary,
+            "auto_moisture_write_enabled": schedule.auto_moisture_write_enabled,
+            "auto_moisture_write_status": schedule.auto_moisture_write_status,
+            "last_moisture_write_status": schedule.last_moisture_write_status,
             "moisture_write_back_ready": schedule.moisture_write_back_ready,
             "recommended_action": schedule.recommended_action,
             "review_state": schedule.review_state,

@@ -18,14 +18,25 @@ This repository is the initial public seed:
 - HACS custom integration scaffold
 - recommended Lovelace dashboard package
 
-The full irrigation runtime is not complete yet. The repo now includes the
-first real runtime milestones:
+The integration now includes the first cron-replacement runtime path while
+still keeping the default install observe-first:
 
 - config flow links to an existing Home Assistant `rachio` entry
 - the integration discovers the linked Rachio entity surface from the entity
   registry
 - site-level supervisor sensors expose health, linked controller posture,
   actual-rain input status, and discovered zone counts
+- the site-level `Zone overview` sensor exposes a visual dashboard payload for
+  each discovered zone: image path, zone/schedule ids, quick-run minutes, next
+  run if HA exposes one, day chips, water/skip badge, rain-skip state,
+  Supervisor badge, moisture band, flow-alert state, and plant/detail notes
+- the integration serves a lightweight Lovelace custom card at
+  `/rachio_supervisor/rachio-supervisor-zone-grid-card.js`; this is the
+  recommended zone-first dashboard surface and renders zone photos, compact
+  badges, editable Quick Run minutes, and confirmation-gated Quick Run actions
+- actual-rain diagnostics now include source status, reporting window,
+  confidence, likely Home Assistant rain-source candidates, and a Rachio
+  weather-source probe that is diagnostic-only
 - the coordinator now reads real Rachio public API event history using the
   linked HA `rachio` API key
 - site-level sensors now expose `last run` and `last skip`
@@ -41,12 +52,27 @@ first real runtime milestones:
 - config flow and options now include a schedule-policy step so individual
   discovered Rachio schedules can be opted into automatic catch-up while the
   default posture stays observe-only
+- the coordinator can execute opt-in weather-skip catch-up through Home
+  Assistant's built-in `rachio.start_watering` service when observe-first mode
+  is disabled; the same safety checks and duplicate lockout back the manual
+  `run_catch_up_now` service
 - setup/options now also accept candidate moisture sensors, and schedule-level
   sensors now expose moisture mapping plus a simple `dry` / `target` / `wet`
   band derived from the mapped sensor value
-- the integration now exposes a manual `write_moisture_now` service that writes
+- the integration exposes a manual `write_moisture_now` service that writes
   the currently mapped moisture value into one resolved Rachio zone, but only
-  when moisture write-back mode is enabled for that entry
+  when moisture write-back mode is enabled for that entry; this updates
+  Rachio's moisture estimate and does not start watering
+- the integration exposes a `quick_run_zone` service for confirmation-gated,
+  operator-initiated zone runs; this is deliberately separate from Supervisor
+  automation and is meant for Rachio-app-style zone cards
+- the integration also exposes `write_recommended_moisture_now` and
+  `acknowledge_all_recommendations` so the packaged dashboard can use real
+  generic actions instead of placeholder per-schedule service data
+- the integration also supports opt-in moisture auto-write per schedule; it is
+  off by default, requires global moisture write-back mode, writes only the
+  mapped HA moisture value into the resolved Rachio zone, and uses a 24-hour
+  same-value cooldown
 - moisture support now uses an explicit per-schedule mapping step in config and
   options instead of guessing by name overlap at runtime
 - the write path now prefers a stable `schedule_entity_id` target and records
@@ -73,9 +99,11 @@ first real runtime milestones:
   valid
 - site-level moisture review now stays visible even when recommended writes are
   `0`, so mapped schedules still expose `dry` / `target` / `wet` posture in
-  the dashboard during wet conditions
+  the dashboard during wet conditions; review items now show the proposed write
+  contract as `HA sensor -> Rachio zone moisture`, with Rachio's current value
+  marked `not_reported` when the public API does not expose it
 - the supervisor now inspects recent Rachio event history for low-flow and
-  high-flow alerts, compares later native calibration events against the prior
+  high-flow alerts across the 7-day inspection window, compares later native calibration events against the prior
   baseline when both are present, and clears the Supervisor-side review queue
   when the post-alert baseline remains stable
 - schedule policy now distinguishes between:
@@ -109,6 +137,9 @@ The deeper irrigation logic is still pending:
 - richer missed-run recurrence handling beyond the current conservative model
 - deeper webhook-quality reasoning beyond registration health
 - more polished dashboard/action workflow for operator execution
+- live dashboards should provide zone photos under
+  `/local/rachio-supervisor/zones/` with real zone photos exported from Rachio
+  or uploaded to Home Assistant
 - native flow calibration execution through Rachio is not implemented because
   Rachio's public API does not currently expose the native calibration command
   or calibrated-flow fields; the Supervisor can verify and clear its own review
@@ -133,9 +164,12 @@ The current deterministic suite lives in:
 
 - [`tests/test_supervisor_logic.py`](./tests/test_supervisor_logic.py)
 
-This is still not the full cutover gate. The real release gate remains a
-7-day live shadow comparison against the old Codex-published Sugarloaf
-supervisor.
+For production cutover from an old cron-based supervisor, the integration must
+be installed/reloaded in Home Assistant, its health/webhook/reconciliation and
+catch-up sensors must be fresh, selected schedules must be explicitly opted into
+automatic catch-up, and `observe_first` must be disabled only after that review.
+The old cron runner can then be paused; deleting old scripts or state files is a
+separate cleanup step.
 
 ## Flow alert review contract
 
@@ -174,6 +208,24 @@ real Home Assistant instance without forcing optional inputs too early.
   entity registry, and it now works against registry rows that expose either
   `config_entry_ids` or the older single `config_entry_id`
 - `rain_actuals_entity` is optional during initial setup and options edits
+- `rain_actuals_entity` may be a numeric observed-rain sensor/helper, or a
+  weather entity only when that weather entity exposes a numeric observed
+  precipitation total; forecast-only weather entities are reported as data
+  warnings instead of being treated as valid actual rain
+- local gauge entities are preferred when present, including gauges delivered
+  through Ecowitt, WeatherFlow/Tempest, Netatmo, Ambient Weather, MQTT,
+  ESPHome, or similar Home Assistant integrations
+- international or regional integrations can be used when they expose a numeric
+  observed total; the resolver understands common attribute names such as
+  `rain_today`, `rain_since_9am`, `precipTotal`,
+  `precipitation_today`, and `observed_precipitation`
+- Australian users without a local gauge can use a BOM/WillyWeather-derived
+  custom integration if it exposes a numeric observed rainfall sensor; the
+  dashboard labels the source window honestly, such as `since_9am` or `today`,
+  instead of pretending every source is rolling 24h
+- Rachio's public forecast endpoint is probed only for source/provider hints.
+  Forecast precipitation is not treated as observed rainfall unless a future
+  API payload exposes a clearly observed historical total
 - candidate moisture sensors are optional during initial setup and options edits
 - if no moisture sensors are selected, the flow skips the schedule moisture
   mapping step entirely and stores an empty explicit mapping instead of showing
@@ -223,6 +275,39 @@ It is aimed at the operational gap between:
 - [docs/assets/screenshots/shadow-dashboard-desktop.png](./docs/assets/screenshots/shadow-dashboard-desktop.png) - current live shadow dashboard capture used for frontend critique
 - [`custom_components/rachio_supervisor/`](./custom_components/rachio_supervisor) - custom integration scaffold
 
+## Dashboard resource
+
+The recommended dashboard uses the packaged zone grid custom card. Add this
+Lovelace resource after installing the integration:
+
+- URL: `/rachio_supervisor/rachio-supervisor-zone-grid-card.js`
+- type: `JavaScript module`
+
+The example dashboard then uses:
+
+```yaml
+type: custom:rachio-supervisor-zone-grid-card
+entity: sensor.rachio_site_zone_overview
+title: Zones
+```
+
+The card includes a thin Supervisor overlay above the zone grid. It stays quiet
+when the runtime is healthy and only adds weight for degraded health, webhook
+issues, catch-up review, recommended moisture writes, flow alerts, or data
+warnings.
+
+For the best operator surface, upload zone photos to:
+
+`/local/rachio-supervisor/zones/<zone-slug>.jpg`
+
+and provide:
+
+`/local/rachio-supervisor/zones/default.jpg`
+
+Quick Run from the card is manual, editable, and confirmation-gated. It starts
+the selected Rachio zone only for the chosen duration and does not enable
+Supervisor catch-up or moisture automation.
+
 ## Planned v1 capabilities
 
 - native Home Assistant config flow
@@ -255,8 +340,8 @@ Today the custom integration provides a narrow but real runtime:
   - last skip
   - last skip decision
   - last reconciliation
-  - catch-up evidence
-  - last catch-up decision
+- catch-up evidence
+- last catch-up decision
   - active-zone count
   - configured-zone count
   - last refresh
@@ -279,14 +364,29 @@ Today the custom integration provides a narrow but real runtime:
   - review
   - catch-up candidate
 
-This milestone is still intentionally narrow. It does not yet execute automatic
+This milestone is still intentionally narrow. It does not execute automatic
 moisture-assisted watering. Moisture support currently means candidate sensor
 selection, explicit per-schedule mapping, coarse moisture-band state, a runtime
-review queue, plus manual write-back and review acknowledgement services.
+review queue, manual write-back, opt-in moisture estimate auto-write, and review acknowledgement services.
 Review acknowledgements are not persisted yet; they reset when the integration
 reloads. Automatic watering remains opt-in and narrow: weather-skip catch-up
 can only execute for explicitly selected schedules, and missed-run recovery is
 still conservative.
+
+## Cron cutover checklist
+
+Use this sequence when replacing a local cron supervisor:
+
+1. Install or reload the custom integration in Home Assistant.
+2. Verify fresh core sensors: `Health`, `Webhook health`, `Last reconciliation`,
+   `Catch-up evidence`, and `Last catch-up decision`.
+3. Configure only the schedules allowed to run automatic catch-up.
+4. Set `observe_first` to `false` only after the selected schedules and zone
+   entities are correct.
+5. Call `rachio_supervisor.evaluate_now` once and confirm the dashboard card
+   still loads from `/rachio_supervisor/rachio-supervisor-zone-grid-card.js`.
+6. Pause the old cron automation after the integration is healthy and publishing
+   catch-up decision state.
 
 ## HACS status
 

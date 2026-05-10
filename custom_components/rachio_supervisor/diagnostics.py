@@ -27,5 +27,7 @@ async def async_get_config_entry_diagnostics(
             "This diagnostics payload reflects the current public runtime milestone.",
             "It links to an existing Home Assistant Rachio entry and publishes site-level evidence plus supervision state.",
             "Automatic irrigation behavior remains intentionally narrow and opt-in.",
+            "Moisture auto-write updates Rachio moisture estimates only; it does not start watering.",
+            "Rachio weather-source hints are diagnostic only; forecast precipitation is not treated as observed rainfall.",
         ],
     }

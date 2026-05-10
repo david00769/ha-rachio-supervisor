@@ -8,7 +8,7 @@
         "data": {
           "site_name": "Site name",
           "rachio_config_entry_id": "Existing Rachio integration",
-          "rain_actuals_entity": "Actual rainfall entity",
+          "rain_actuals_entity": "Observed rainfall total entity",
           "moisture_sensor_entities": "Candidate moisture sensors",
           "zone_count": "Zone count",
           "observe_first": "Start in observe-first mode",
@@ -21,10 +21,11 @@
       },
       "policy": {
         "title": "Schedule policy",
-        "description": "Choose which discovered Rachio schedules are allowed automatic catch-up. All others stay observe-only.",
+        "description": "Choose which discovered Rachio schedules are allowed automatic catch-up, missed-run recovery, or moisture auto-write. All others stay observe-only.",
         "data": {
           "auto_catch_up_schedule_entities": "Automatic catch-up schedules",
-          "auto_missed_run_schedule_entities": "Missed-run recovery schedules"
+          "auto_missed_run_schedule_entities": "Missed-run recovery schedules",
+          "auto_moisture_write_schedule_entities": "Moisture auto-write schedules"
         }
       },
       "moisture_map": {
@@ -44,7 +45,7 @@
         "data": {
           "site_name": "Site name",
           "rachio_config_entry_id": "Existing Rachio integration",
-          "rain_actuals_entity": "Actual rainfall entity",
+          "rain_actuals_entity": "Observed rainfall total entity",
           "moisture_sensor_entities": "Candidate moisture sensors",
           "zone_count": "Zone count",
           "observe_first": "Start in observe-first mode",
@@ -57,10 +58,11 @@
       },
       "policy": {
         "title": "Schedule policy",
-        "description": "Choose which discovered Rachio schedules are allowed automatic catch-up. All others stay observe-only.",
+        "description": "Choose which discovered Rachio schedules are allowed automatic catch-up, missed-run recovery, or moisture auto-write. All others stay observe-only.",
         "data": {
           "auto_catch_up_schedule_entities": "Automatic catch-up schedules",
-          "auto_missed_run_schedule_entities": "Missed-run recovery schedules"
+          "auto_missed_run_schedule_entities": "Missed-run recovery schedules",
+          "auto_moisture_write_schedule_entities": "Moisture auto-write schedules"
         }
       },
       "moisture_map": {
@@ -125,6 +127,9 @@
       },
       "configured_zone_count": {
         "name": "Configured zones"
+      },
+      "zone_overview": {
+        "name": "Zone overview"
       },
       "last_reconciliation": {
         "name": "Last reconciliation"

@@ -17,6 +17,7 @@ from homeassistant.util import dt as dt_util
 from .const import (
     CONF_ALLOW_MOISTURE_WRITE_BACK,
     CONF_AUTO_CATCH_UP_SCHEDULES,
+    CONF_AUTO_MOISTURE_WRITE_SCHEDULES,
     CONF_AUTO_MISSED_RUN_SCHEDULES,
     CONF_CLOUDHOOK_URL,
     CONF_ENABLE_PERSISTENT_NOTIFICATIONS,
@@ -46,9 +47,10 @@ from .discovery import (
 )
 from .rachio_api import RachioClient, RachioClientError
 
-EVENT_LOOKBACK_HOURS = 96
+EVENT_LOOKBACK_HOURS = 168
 EXPECTED_EVENT_FRESHNESS_HOURS = 36
 DEGRADED_FAST_WINDOW_HOURS = 2
+AUTO_MOISTURE_WRITE_COOLDOWN_HOURS = 24
 WORD_RE = re.compile(r"[a-z0-9]+")
 
 RAIN_MM_RE = re.compile(r"observed ([0-9.]+) mm(?: and predicted ([0-9.]+) mm)?")
@@ -65,6 +67,53 @@ FLOW_ALERT_ZONE_RE = re.compile(
 FLOW_STABLE_TOLERANCE_RATIO = 0.15
 DRY_THRESHOLD = 25.0
 WET_THRESHOLD = 60.0
+RAIN_HINT_WORDS = ("rain", "rainfall", "precip", "precipitation")
+WEATHER_PROBE_HINT_WORDS = (
+    "weather",
+    "station",
+    "source",
+    "provider",
+    "pws",
+    "rain",
+    "precip",
+)
+RAIN_TOTAL_ATTRIBUTE_ALIASES = {
+    "rain24h": ("rain_24h", "24h", "high"),
+    "rainlast24h": ("rain_last_24h", "24h", "high"),
+    "precipitation24h": ("precipitation_24h", "24h", "high"),
+    "preciptotal24h": ("precipTotal24h", "24h", "high"),
+    "observedprecipitation24h": ("observed_precipitation_24h", "24h", "high"),
+    "raintoday": ("rain_today", "today", "medium"),
+    "dailyrain": ("daily_rain", "today", "medium"),
+    "precipitationtoday": ("precipitation_today", "today", "medium"),
+    "preciptoday": ("precip_today", "today", "medium"),
+    "preciptotal": ("precipTotal", "today", "medium"),
+    "observedprecipitation": ("observed_precipitation", "observed_total", "medium"),
+    "observedrain": ("observed_rain", "observed_total", "medium"),
+    "rain": ("rain", "observed_total", "medium"),
+    "precipitation": ("precipitation", "observed_total", "medium"),
+    "rainsince9am": ("rain_since_9am", "since_9am", "medium"),
+    "rainfall9am": ("rainfall_9am", "since_9am", "medium"),
+    "rainlasthour": ("rain_last_hour", "last_hour", "low"),
+}
+RAIN_RATE_ATTRIBUTE_ALIASES = {
+    "rainrate",
+    "preciprate",
+    "precipitationrate",
+}
+
+
+@dataclass(frozen=True, slots=True)
+class RainActualsResolution:
+    """Resolved observed-rain source details."""
+
+    value: str
+    unit: str | None
+    status: str
+    missing_input: str | None
+    reason: str | None
+    window: str
+    confidence: str
 
 
 @dataclass(slots=True)
@@ -95,6 +144,12 @@ class ScheduleSnapshot:
     threshold_mm: float | None
     observed_mm: float | None
     moisture_last_updated: str | None = None
+    rachio_moisture_value: str | None = None
+    write_value: str | None = None
+    write_summary: str = "No moisture write target."
+    auto_moisture_write_enabled: bool = False
+    auto_moisture_write_status: str = "off"
+    last_moisture_write_status: str | None = None
 
 
 @dataclass(slots=True)
@@ -118,6 +173,7 @@ class RachioEvidenceSnapshot:
     webhook_external_id: str | None
     flow_alert_snapshots: tuple["FlowAlertSnapshot", ...]
     schedule_snapshots: tuple[ScheduleSnapshot, ...]
+    weather_source_probe: dict[str, object] | None = None
 
 
 @dataclass(slots=True)
@@ -168,6 +224,9 @@ class SupervisorSnapshot:
     actual_rain_value: str
     actual_rain_unit: str | None
     rain_actuals_status: str
+    rain_actuals_reason: str
+    rain_actuals_window: str
+    rain_actuals_confidence: str
     controller_name: str
     controller_id: str
     last_event_summary: str
@@ -209,6 +268,9 @@ class SupervisorSnapshot:
     last_refresh: str
     notes: tuple[str, ...]
     moisture_review_items: tuple[dict[str, object], ...]
+    zone_overview_items: tuple[dict[str, object], ...]
+    rain_source_candidates: tuple[dict[str, object], ...]
+    rachio_weather_probe: dict[str, object] | None
     discovered_entities: dict[str, object]
     schedule_snapshots: tuple[ScheduleSnapshot, ...]
 
@@ -638,13 +700,258 @@ def resolve_moisture_entity(
     return mapped_entity_id, f"{numeric:g}", band, last_updated
 
 
+def _coerce_float(value: object) -> float | None:
+    """Return a float for numeric-looking HA state/attribute values."""
+    try:
+        return float(value)  # type: ignore[arg-type]
+    except (TypeError, ValueError):
+        return None
+
+
+def _normalise_key(value: str) -> str:
+    """Normalise a Home Assistant attribute key for alias matching."""
+    return re.sub(r"[^a-z0-9]", "", value.lower())
+
+
+def _rain_unit(attributes: dict[str, object]) -> str | None:
+    """Return the best available precipitation unit label."""
+    return (
+        attributes.get("precipitation_unit")
+        or attributes.get("unit_of_measurement")
+        or "mm"
+    )
+
+
+def _infer_sensor_window(entity_id: str, attributes: dict[str, object]) -> str:
+    """Infer the reporting window for a numeric observed-rain sensor."""
+    haystack = " ".join(
+        [
+            entity_id,
+            str(attributes.get("friendly_name", "")),
+            str(attributes.get("name", "")),
+        ]
+    ).lower()
+    if "24" in haystack:
+        return "24h"
+    if "since 9" in haystack or "since_9" in haystack:
+        return "since_9am"
+    if "today" in haystack or "daily" in haystack:
+        return "today"
+    if "hour" in haystack:
+        return "last_hour"
+    return "configured_sensor"
+
+
+def _resolve_rain_total_attribute(
+    attributes: dict[str, object],
+) -> tuple[str, float, str, str] | None:
+    """Return the first numeric observed-rain total attribute."""
+    normalised = {
+        _normalise_key(str(key)): (str(key), value)
+        for key, value in attributes.items()
+    }
+    for alias, (canonical_name, window, confidence) in RAIN_TOTAL_ATTRIBUTE_ALIASES.items():
+        if alias not in normalised:
+            continue
+        source_name, attr_value = normalised[alias]
+        numeric_attr = _coerce_float(attr_value)
+        if numeric_attr is None:
+            continue
+        return source_name or canonical_name, numeric_attr, window, confidence
+    return None
+
+
+def _has_rain_rate_only(attributes: dict[str, object]) -> bool:
+    """Return true when a source reports rate but not a usable total."""
+    normalised = {_normalise_key(str(key)) for key in attributes}
+    return bool(normalised & RAIN_RATE_ATTRIBUTE_ALIASES)
+
+
+def resolve_rain_actuals_entity(
+    hass: HomeAssistant,
+    entity_id: str | None,
+) -> RainActualsResolution:
+    """Resolve a configured observed-rain source into value/unit/status/reason."""
+    if not entity_id:
+        return RainActualsResolution(
+            value="unconfigured",
+            unit=None,
+            status="unconfigured",
+            missing_input="rain_actuals_unconfigured",
+            reason="No observed rainfall total entity is configured.",
+            window="unconfigured",
+            confidence="none",
+        )
+    state = hass.states.get(entity_id)
+    if state is None:
+        return RainActualsResolution(
+            value="unavailable",
+            unit=None,
+            status="missing",
+            missing_input="rain_actuals_missing",
+            reason="Configured observed rainfall entity is missing.",
+            window="unknown",
+            confidence="none",
+        )
+    attributes = dict(getattr(state, "attributes", {}) or {})
+    if state.state in {STATE_UNAVAILABLE, STATE_UNKNOWN}:
+        return RainActualsResolution(
+            value=str(state.state),
+            unit=attributes.get("unit_of_measurement"),
+            status="unavailable",
+            missing_input="rain_actuals_unavailable",
+            reason="Configured observed rainfall entity is not reporting a usable value.",
+            window="unknown",
+            confidence="none",
+        )
+
+    numeric_state = _coerce_float(state.state)
+
+    if numeric_state is not None:
+        window = _infer_sensor_window(str(entity_id), attributes)
+        confidence = "high" if window == "24h" else "medium"
+        return RainActualsResolution(
+            value=f"{numeric_state:g}",
+            unit=attributes.get("unit_of_measurement"),
+            status="ok",
+            missing_input=None,
+            reason="Observed rainfall total resolved from a numeric Home Assistant entity.",
+            window=window,
+            confidence=confidence,
+        )
+
+    resolved_attribute = _resolve_rain_total_attribute(attributes)
+    if resolved_attribute is not None:
+        attr_name, numeric_attr, window, confidence = resolved_attribute
+        return RainActualsResolution(
+            value=f"{numeric_attr:g}",
+            unit=_rain_unit(attributes),
+            status="ok",
+            missing_input=None,
+            reason=f"Observed rainfall total resolved from the {attr_name} attribute.",
+            window=window,
+            confidence=confidence,
+        )
+
+    if _has_rain_rate_only(attributes):
+        return RainActualsResolution(
+            value="not_reported",
+            unit=_rain_unit(attributes),
+            status="rain_rate_only",
+            missing_input="rain_actuals_rate_only",
+            reason="Configured rain source exposes precipitation rate, but not an observed rainfall total.",
+            window="instantaneous_rate",
+            confidence="none",
+        )
+
+    if str(entity_id).startswith("weather."):
+        return RainActualsResolution(
+            value="not_reported",
+            unit=attributes.get("precipitation_unit"),
+            status="weather_no_observed_precipitation",
+            missing_input="rain_actuals_weather_no_observed_precipitation",
+            reason="Configured weather entity does not expose an observed rainfall total.",
+            window="forecast_only",
+            confidence="none",
+        )
+
+    return RainActualsResolution(
+        value=str(state.state),
+        unit=attributes.get("unit_of_measurement"),
+        status="non_numeric",
+        missing_input="rain_actuals_non_numeric",
+        reason="Configured observed rainfall entity is not numeric.",
+        window="unknown",
+        confidence="none",
+    )
+
+
+def _iter_hass_states(hass: HomeAssistant) -> tuple[object, ...]:
+    """Return all HA state objects when the state machine exposes them."""
+    async_all = getattr(getattr(hass, "states", None), "async_all", None)
+    if callable(async_all):
+        return tuple(async_all())
+    state_values = getattr(getattr(hass, "states", None), "_states", None)
+    if isinstance(state_values, dict):
+        return tuple(state_values.values())
+    return ()
+
+
+def discover_rain_source_candidates(
+    hass: HomeAssistant,
+    selected_entity_id: str | None = None,
+) -> tuple[dict[str, object], ...]:
+    """Discover plausible observed-rain sources already present in Home Assistant."""
+    candidates: list[dict[str, object]] = []
+    for state in _iter_hass_states(hass):
+        entity_id = str(getattr(state, "entity_id", "") or "")
+        if not entity_id:
+            continue
+        attributes = dict(getattr(state, "attributes", {}) or {})
+        friendly_name = str(attributes.get("friendly_name", ""))
+        haystack = f"{entity_id} {friendly_name}".lower()
+        has_rain_name = any(word in haystack for word in RAIN_HINT_WORDS)
+        has_precip_device_class = str(attributes.get("device_class", "")).lower() in {
+            "precipitation",
+            "precipitation_intensity",
+        }
+        has_rain_unit = str(attributes.get("unit_of_measurement", "")).lower() in {
+            "mm",
+            "in",
+            "inch",
+            "inches",
+        }
+        has_total_attr = _resolve_rain_total_attribute(attributes) is not None
+        if not (has_rain_name or has_precip_device_class or has_rain_unit or has_total_attr):
+            continue
+        resolution = resolve_rain_actuals_entity(hass, entity_id)
+        score = 0
+        if entity_id == selected_entity_id:
+            score += 100
+        if resolution.status == "ok":
+            score += 50
+        if resolution.confidence == "high":
+            score += 20
+        elif resolution.confidence == "medium":
+            score += 10
+        if entity_id.startswith("sensor."):
+            score += 8
+        if has_precip_device_class:
+            score += 6
+        if has_rain_name:
+            score += 4
+        candidates.append(
+            {
+                "entity_id": entity_id,
+                "name": friendly_name or entity_id,
+                "state": str(getattr(state, "state", "")),
+                "unit": resolution.unit,
+                "status": resolution.status,
+                "window": resolution.window,
+                "confidence": resolution.confidence,
+                "reason": resolution.reason,
+                "selected": entity_id == selected_entity_id,
+                "_score": score,
+            }
+        )
+    candidates.sort(key=lambda item: (-int(item["_score"]), str(item["entity_id"])))
+    for item in candidates:
+        item.pop("_score", None)
+    return tuple(candidates[:12])
+
+
 def apply_moisture_mapping(
     hass: HomeAssistant,
     schedules: tuple[ScheduleSnapshot, ...],
     schedule_moisture_map: dict[str, str],
     acknowledged_recommendation_ids: set[str],
+    auto_moisture_write_schedule_entities: set[str] | None = None,
+    last_write_status_by_rule: dict[str, str] | None = None,
+    write_back_mode_enabled: bool = True,
 ) -> tuple[ScheduleSnapshot, ...]:
     """Attach moisture mapping and banding to schedule snapshots."""
+    auto_moisture_write_schedule_entities = auto_moisture_write_schedule_entities or set()
+    last_write_status_by_rule = last_write_status_by_rule or {}
     hydrated: list[ScheduleSnapshot] = []
     for schedule in schedules:
         mapped_entity_id = (
@@ -687,6 +994,32 @@ def apply_moisture_mapping(
             review_state = "acknowledged"
         else:
             review_state = "pending_review"
+        auto_write_enabled = bool(
+            schedule.schedule_entity_id
+            and schedule.schedule_entity_id in auto_moisture_write_schedule_entities
+        )
+        auto_write_status = "off"
+        if auto_write_enabled:
+            if not write_back_mode_enabled:
+                auto_write_status = "blocked"
+            elif (
+                recommended_action == "write_moisture_now"
+                and schedule.moisture_write_back_ready == "ready"
+            ):
+                auto_write_status = "eligible"
+            elif recommended_action == "write_moisture_now":
+                auto_write_status = "blocked"
+            else:
+                auto_write_status = "watching"
+        write_value = (
+            moisture_value if moisture_band in {"dry", "target", "wet"} else None
+        )
+        if write_value and schedule.moisture_write_back_ready == "ready":
+            write_summary = f"Sensor {write_value}% -> Rachio zone moisture"
+        elif write_value:
+            write_summary = f"Sensor {write_value}% available; Rachio zone is not resolved"
+        else:
+            write_summary = "No usable moisture value to write"
         hydrated.append(
             ScheduleSnapshot(
                 rule_id=schedule.rule_id,
@@ -713,6 +1046,12 @@ def apply_moisture_mapping(
                 threshold_mm=schedule.threshold_mm,
                 observed_mm=schedule.observed_mm,
                 moisture_last_updated=moisture_last_updated,
+                rachio_moisture_value=None,
+                write_value=write_value,
+                write_summary=write_summary,
+                auto_moisture_write_enabled=auto_write_enabled,
+                auto_moisture_write_status=auto_write_status,
+                last_moisture_write_status=last_write_status_by_rule.get(schedule.rule_id),
             )
         )
     return tuple(hydrated)
@@ -810,6 +1149,16 @@ def build_moisture_review_items(
         else:
             posture_note = "Unmapped"
             rank = 4
+        write_value = schedule.write_value
+        if write_value is None and schedule.moisture_band in {"dry", "target", "wet"}:
+            write_value = schedule.moisture_value
+        write_summary = schedule.write_summary
+        if (
+            write_summary == "No moisture write target."
+            and write_value
+            and schedule.moisture_write_back_ready == "ready"
+        ):
+            write_summary = f"Sensor {write_value}% -> Rachio zone moisture"
         items.append(
             {
                 "schedule_name": schedule.name,
@@ -823,6 +1172,18 @@ def build_moisture_review_items(
                 "review_state": schedule.review_state,
                 "moisture_write_back_ready": schedule.moisture_write_back_ready,
                 "moisture_value": schedule.moisture_value,
+                "sensor_value": schedule.moisture_value,
+                "rachio_moisture_value": schedule.rachio_moisture_value or "not_reported",
+                "write_value": write_value,
+                "write_target_label": "Rachio zone moisture",
+                "write_summary": write_summary,
+                "can_write": bool(
+                    schedule.moisture_write_back_ready == "ready"
+                    and write_value is not None
+                ),
+                "auto_moisture_write_enabled": schedule.auto_moisture_write_enabled,
+                "auto_moisture_write_status": schedule.auto_moisture_write_status,
+                "last_moisture_write_status": schedule.last_moisture_write_status,
                 "moisture_last_updated": schedule.moisture_last_updated,
                 "data_quality": moisture_data_quality(schedule.moisture_band),
                 "_rank": rank,
@@ -831,6 +1192,211 @@ def build_moisture_review_items(
     items.sort(key=lambda item: (int(item["_rank"]), str(item["schedule_name"]).lower()))
     for item in items:
         item.pop("_rank", None)
+    return tuple(items)
+
+
+def _state_attr_value(hass: HomeAssistant, entity_id: str | None, keys: tuple[str, ...]) -> str | None:
+    """Return the first non-empty attribute value from one HA entity."""
+    if not entity_id:
+        return None
+    state = hass.states.get(entity_id)
+    if state is None:
+        return None
+    for key in keys:
+        value = state.attributes.get(key)
+        if value not in {None, ""}:
+            return str(value)
+    return None
+
+
+def _state_attr_raw(hass: HomeAssistant, entity_id: str | None, keys: tuple[str, ...]) -> object | None:
+    """Return the first non-empty raw attribute value from one HA entity."""
+    if not entity_id:
+        return None
+    state = hass.states.get(entity_id)
+    if state is None:
+        return None
+    for key in keys:
+        value = state.attributes.get(key)
+        if value is not None and value != "":
+            return value
+    return None
+
+
+def _watering_days(value: object | None) -> list[str]:
+    """Normalize schedule day metadata into compact day chips."""
+    if value is None or value == "":
+        return []
+    day_map = {
+        "monday": "M",
+        "mon": "M",
+        "m": "M",
+        "tuesday": "T",
+        "tue": "T",
+        "tues": "T",
+        "wednesday": "W",
+        "wed": "W",
+        "w": "W",
+        "thursday": "Th",
+        "thu": "Th",
+        "thur": "Th",
+        "thurs": "Th",
+        "friday": "F",
+        "fri": "F",
+        "f": "F",
+        "saturday": "Sa",
+        "sat": "Sa",
+        "sunday": "Su",
+        "sun": "Su",
+    }
+    if isinstance(value, (list, tuple, set)):
+        parts = [str(part).strip() for part in value]
+    else:
+        parts = re.split(r"[,/| ]+", str(value))
+    chips: list[str] = []
+    for part in parts:
+        key = part.strip().lower()
+        chip = day_map.get(key)
+        if chip and chip not in chips:
+            chips.append(chip)
+    return chips
+
+
+def _rain_skip_state(schedule: ScheduleSnapshot) -> str:
+    """Return a compact rain-skip state for zone cards."""
+    if not schedule.last_skip_at:
+        return "none"
+    if schedule.observed_mm is None:
+        return "skipped_unknown_rain"
+    if schedule.threshold_mm is not None and schedule.observed_mm >= schedule.threshold_mm:
+        return "skipped_rain_satisfied"
+    if schedule.threshold_mm is not None:
+        return "skipped_rain_shortfall"
+    return "skipped"
+
+
+def _matching_flow_alert(
+    schedule: ScheduleSnapshot,
+    flow_alerts: tuple[FlowAlertSnapshot, ...],
+) -> FlowAlertSnapshot | None:
+    """Return the best pending flow alert for one schedule."""
+    schedule_words = normalize_words(schedule.name)
+    for alert in flow_alerts:
+        if alert.review_state != "pending_review":
+            continue
+        alert_words = normalize_words(alert.zone_name)
+        if not alert_words:
+            continue
+        if alert_words.issubset(schedule_words) or schedule_words.issubset(alert_words):
+            return alert
+    return None
+
+
+def build_zone_overview_items(
+    hass: HomeAssistant,
+    schedules: tuple[ScheduleSnapshot, ...],
+    flow_alerts: tuple[FlowAlertSnapshot, ...] = (),
+) -> tuple[dict[str, object], ...]:
+    """Build compact, visual zone rows for dashboard use."""
+    items: list[dict[str, object]] = []
+    for index, schedule in enumerate(schedules, start=1):
+        slug = "-".join(sorted(normalize_words(schedule.name))) or f"zone-{index}"
+        next_run = _state_attr_value(
+            hass,
+            schedule.schedule_entity_id,
+            (
+                "next_run",
+                "next_run_at",
+                "next_scheduled_start",
+                "next_start_time",
+                "next_event",
+            ),
+        )
+        watering_days = _watering_days(
+            _state_attr_raw(
+                hass,
+                schedule.schedule_entity_id,
+                (
+                    "watering_days",
+                    "days",
+                    "schedule_days",
+                    "weekdays",
+                    "day_chips",
+                ),
+            )
+        )
+        plant_note = _state_attr_value(
+            hass,
+            schedule.schedule_entity_id,
+            ("plant_note", "plants", "zone_note", "soil_note", "description"),
+        )
+        detail_note = _state_attr_value(
+            hass,
+            schedule.schedule_entity_id,
+            ("detail_note", "watering_note", "emitters", "slope_note"),
+        )
+        schedule_state = "unknown"
+        if schedule.schedule_entity_id:
+            state = hass.states.get(schedule.schedule_entity_id)
+            if state is not None:
+                schedule_state = str(state.state)
+        flow_alert = _matching_flow_alert(schedule, flow_alerts)
+        flow_alert_state = flow_alert.status if flow_alert else "none"
+        rain_skip_state = _rain_skip_state(schedule)
+        if schedule.last_skip_at:
+            water_badge = "skip"
+            water_icon = "mdi:weather-rainy"
+        elif schedule.status == "completed_recently":
+            water_badge = "watered"
+            water_icon = "mdi:water-check"
+        else:
+            water_badge = "watch"
+            water_icon = "mdi:calendar-clock"
+        if schedule.recommended_action == "write_moisture_now":
+            supervisor_badge = "moisture"
+            supervisor_icon = "mdi:water-percent-alert"
+        elif flow_alert:
+            supervisor_badge = "flow"
+            supervisor_icon = "mdi:pipe-leak"
+        elif schedule.catch_up_candidate in {
+            "eligible_auto",
+            "review_recommended",
+            "missed_run_review",
+        }:
+            supervisor_badge = "catch-up"
+            supervisor_icon = "mdi:sprinkler-variant"
+        else:
+            supervisor_badge = "ok"
+            supervisor_icon = "mdi:check-circle-outline"
+        items.append(
+            {
+                "zone_name": schedule.name,
+                "schedule_name": schedule.name,
+                "schedule_entity_id": schedule.schedule_entity_id,
+                "zone_entity_id": schedule.zone_entity_id,
+                "image_path": f"/local/rachio-supervisor/zones/{slug}.jpg",
+                "fallback_image_path": "/local/rachio-supervisor/zones/default.jpg",
+                "quick_run_minutes": schedule.runtime_minutes,
+                "schedule_state": schedule_state,
+                "next_run": next_run or "not_reported",
+                "watering_days": watering_days,
+                "last_run_at": schedule.last_run_at,
+                "last_skip_at": schedule.last_skip_at,
+                "rain_skip_state": rain_skip_state,
+                "water_badge": water_badge,
+                "water_icon": water_icon,
+                "supervisor_badge": supervisor_badge,
+                "supervisor_icon": supervisor_icon,
+                "moisture_band": schedule.moisture_band,
+                "moisture_value": schedule.moisture_value,
+                "flow_alert_state": flow_alert_state,
+                "flow_review_state": flow_alert_state,
+                "policy_mode": schedule.policy_mode,
+                "runtime_minutes": schedule.runtime_minutes,
+                "plant_note": plant_note or "Add plants, soil, emitters, and frequency.",
+                "detail_note": detail_note or schedule.summary,
+            }
+        )
     return tuple(items)
 
 
@@ -856,6 +1422,75 @@ def choose_controller(
         return None
     candidates.sort(key=lambda item: (item[0], item[1], item[2]), reverse=True)
     return candidates[0][3]
+
+
+def _weather_probe_hints(
+    payload: object,
+    *,
+    prefix: str,
+    depth: int = 0,
+    limit: int = 24,
+) -> list[dict[str, str]]:
+    """Return compact weather-related scalar hints from nested Rachio payloads."""
+    if depth > 5 or limit <= 0:
+        return []
+    hints: list[dict[str, str]] = []
+    if isinstance(payload, dict):
+        for key, value in payload.items():
+            path = f"{prefix}.{key}" if prefix else str(key)
+            path_l = path.lower()
+            if isinstance(value, (dict, list, tuple)):
+                hints.extend(
+                    _weather_probe_hints(
+                        value,
+                        prefix=path,
+                        depth=depth + 1,
+                        limit=limit - len(hints),
+                    )
+                )
+            elif any(word in path_l for word in WEATHER_PROBE_HINT_WORDS):
+                hints.append({"path": path, "value": str(value)[:160]})
+            if len(hints) >= limit:
+                return hints[:limit]
+    elif isinstance(payload, (list, tuple)):
+        for index, value in enumerate(payload[:8]):
+            path = f"{prefix}[{index}]"
+            hints.extend(
+                _weather_probe_hints(
+                    value,
+                    prefix=path,
+                    depth=depth + 1,
+                    limit=limit - len(hints),
+                )
+            )
+            if len(hints) >= limit:
+                return hints[:limit]
+    return hints[:limit]
+
+
+def build_rachio_weather_probe(
+    controller: dict[str, object],
+    forecast_payload: dict[str, object] | None,
+) -> dict[str, object]:
+    """Build diagnostics for Rachio weather-source hints without using forecasts as actuals."""
+    hints = _weather_probe_hints(controller, prefix="controller")
+    if forecast_payload:
+        hints.extend(
+            _weather_probe_hints(
+                forecast_payload,
+                prefix="forecast",
+                limit=max(0, 24 - len(hints)),
+            )
+        )
+    return {
+        "status": "forecast_available" if forecast_payload else "forecast_unavailable",
+        "source": "rachio_public_forecast",
+        "used_for_actual_rain": False,
+        "reason": (
+            "Rachio forecast/source hints are diagnostic only; forecast precipitation is not treated as observed rainfall."
+        ),
+        "hints": hints[:24],
+    }
 
 
 def schedule_runtime_minutes(rule: dict[str, object]) -> int:
@@ -1035,6 +1670,22 @@ def build_rachio_evidence(
 
     controller_id = str(controller["id"])
     controller_name = str(controller.get("name", "Rachio Controller"))
+    forecast_getter = getattr(client, "get_device_forecast", None)
+    if callable(forecast_getter):
+        try:
+            forecast_payload = forecast_getter(controller_id, units="METRIC")
+            weather_source_probe = build_rachio_weather_probe(controller, forecast_payload)
+        except RachioClientError as err:
+            weather_source_probe = build_rachio_weather_probe(controller, None)
+            weather_source_probe["reason"] = (
+                "Rachio forecast/source probe failed and remains diagnostic only: "
+                f"{str(err)[:220]}"
+            )
+    else:
+        weather_source_probe = build_rachio_weather_probe(controller, None)
+        weather_source_probe["reason"] = (
+            "Rachio forecast/source probe unavailable in the current API adapter."
+        )
     now = dt_util.now()
     events = client.list_device_events(
         controller_id,
@@ -1206,6 +1857,7 @@ def build_rachio_evidence(
             acknowledged_flow_alert_ids,
         ),
         schedule_snapshots=tuple(schedule_snapshots),
+        weather_source_probe=weather_source_probe,
     )
 
 
@@ -1236,6 +1888,8 @@ class RachioSupervisorCoordinator(DataUpdateCoordinator[SupervisorSnapshot]):
         self._last_health_notification: str | None = None
         self._last_notified_decision_key: str | None = None
         self._lockouts: dict[str, dict[str, object]] = {}
+        self._auto_moisture_write_lockouts: dict[str, dict[str, object]] = {}
+        self._moisture_write_status_by_rule: dict[str, str] = {}
         self._latest_catch_up_decision: dict[str, object] = {
             "status": "not_needed",
             "reason": "monitoring",
@@ -1254,12 +1908,15 @@ class RachioSupervisorCoordinator(DataUpdateCoordinator[SupervisorSnapshot]):
         status: str,
         schedule_name: str | None,
         moisture_value: str | None,
+        rule_id: str | None = None,
     ) -> None:
-        """Record the most recent manual moisture write result."""
+        """Record the most recent moisture write result."""
         self._last_moisture_write_status = status
         self._last_moisture_write_at = dt_util.now().isoformat()
         self._last_moisture_write_schedule = schedule_name
         self._last_moisture_write_value = moisture_value
+        if rule_id:
+            self._moisture_write_status_by_rule[rule_id] = status
 
     def set_recommendation_acknowledged(
         self,
@@ -1391,6 +2048,127 @@ class RachioSupervisorCoordinator(DataUpdateCoordinator[SupervisorSnapshot]):
             blocking=True,
         )
 
+    async def _async_execute_auto_moisture_writes(
+        self,
+        *,
+        linked_entry: ConfigEntry | None,
+        api_key: object | None,
+        schedules: tuple[ScheduleSnapshot, ...],
+        current: datetime,
+    ) -> None:
+        """Execute explicitly enabled moisture write-back items conservatively."""
+        if linked_entry is None or not api_key:
+            return
+        client = RachioClient(str(api_key))
+        for schedule in schedules:
+            if (
+                not schedule.auto_moisture_write_enabled
+                or schedule.auto_moisture_write_status != "eligible"
+                or schedule.controller_zone_id is None
+                or schedule.write_value is None
+            ):
+                continue
+            try:
+                moisture_percent = max(0.0, min(100.0, float(schedule.write_value)))
+            except (TypeError, ValueError):
+                self.record_moisture_write(
+                    status="auto_rejected_non_numeric_moisture_value",
+                    schedule_name=schedule.name,
+                    moisture_value=schedule.write_value,
+                    rule_id=schedule.rule_id,
+                )
+                continue
+
+            lockout = self._auto_moisture_write_lockouts.get(schedule.rule_id)
+            if lockout:
+                last_at = datetime.fromisoformat(str(lockout["at"]))
+                cooldown = timedelta(hours=AUTO_MOISTURE_WRITE_COOLDOWN_HOURS)
+                if str(lockout.get("value")) == f"{moisture_percent:g}" and (
+                    current - last_at < cooldown
+                ):
+                    self.record_moisture_write(
+                        status="auto_skipped_cooldown",
+                        schedule_name=schedule.name,
+                        moisture_value=f"{moisture_percent:g}",
+                        rule_id=schedule.rule_id,
+                    )
+                    continue
+
+            try:
+                await self.hass.async_add_executor_job(
+                    client.set_zone_moisture_percent,
+                    schedule.controller_zone_id,
+                    moisture_percent,
+                )
+            except RachioClientError:
+                self.record_moisture_write(
+                    status="auto_rejected_api_error",
+                    schedule_name=schedule.name,
+                    moisture_value=f"{moisture_percent:g}",
+                    rule_id=schedule.rule_id,
+                )
+                raise
+            self._auto_moisture_write_lockouts[schedule.rule_id] = {
+                "at": current.isoformat(),
+                "value": f"{moisture_percent:g}",
+            }
+            self.record_moisture_write(
+                status="auto_written",
+                schedule_name=schedule.name,
+                moisture_value=f"{moisture_percent:g}",
+                rule_id=schedule.rule_id,
+            )
+
+    async def _async_execute_catch_up_decision(
+        self,
+        decision: dict[str, object],
+        *,
+        current: datetime,
+        source: str,
+    ) -> dict[str, object]:
+        """Execute one confirmed catch-up decision through the HA Rachio service."""
+        if decision.get("status") != "confirmed":
+            raise ValueError("No confirmed catch-up decision is ready to run.")
+        zone_entity_id = decision.get("zone_entity_id")
+        if not zone_entity_id:
+            raise ValueError("The current catch-up decision has no resolved zone entity.")
+        decision_key = str(decision.get("decision_key") or "")
+        if decision_key and decision_key in self._lockouts:
+            raise ValueError("The current catch-up decision was already executed.")
+
+        executed = dict(decision)
+        executed["decision_at"] = executed.get("decision_at") or current.isoformat()
+        await self.hass.services.async_call(
+            "rachio",
+            "start_watering",
+            {
+                "entity_id": str(zone_entity_id),
+                "duration": int(executed.get("runtime_minutes", 0) or 0),
+            },
+            blocking=True,
+        )
+        executed["status"] = "executed"
+        executed["execution_source"] = source
+        self._lockouts[decision_key] = {
+            "zone_label": executed.get("zone_label") or executed.get("schedule_name"),
+            "decision_at": executed["decision_at"],
+            "status": "executed",
+            "source": source,
+        }
+        self._latest_catch_up_decision = executed
+        return executed
+
+    async def async_run_catch_up_now(self) -> None:
+        """Run the current confirmed catch-up candidate as an explicit operator action."""
+        await self.async_request_refresh()
+        decision = self._latest_catch_up_decision
+        executed = await self._async_execute_catch_up_decision(
+            decision,
+            current=dt_util.now(),
+            source="manual_service",
+        )
+        self._latest_catch_up_decision = executed
+
     async def _async_update_data(self) -> SupervisorSnapshot:
         """Return the current site-level supervision snapshot."""
         current = dt_util.now()
@@ -1429,6 +2207,11 @@ class RachioSupervisorCoordinator(DataUpdateCoordinator[SupervisorSnapshot]):
             for entity_id in data.get(CONF_AUTO_MISSED_RUN_SCHEDULES, [])
             if isinstance(entity_id, str)
         }
+        auto_moisture_write_schedule_entities = {
+            entity_id
+            for entity_id in data.get(CONF_AUTO_MOISTURE_WRITE_SCHEDULES, [])
+            if isinstance(entity_id, str)
+        }
         schedule_moisture_map = {
             str(schedule_entity_id): str(moisture_entity_id)
             for schedule_entity_id, moisture_entity_id in data.get(
@@ -1456,29 +2239,15 @@ class RachioSupervisorCoordinator(DataUpdateCoordinator[SupervisorSnapshot]):
 
         missing_inputs: list[str] = []
         rain_actuals_entity = str(data.get(CONF_RAIN_ACTUALS_ENTITY, "") or "")
-        rain_state_obj = self.hass.states.get(rain_actuals_entity)
-        if not rain_actuals_entity:
-            actual_rain_value = "unconfigured"
-            actual_rain_unit = None
-            rain_actuals_status = "unconfigured"
-            missing_inputs.append("rain_actuals_unconfigured")
-            notes.append("Actual rain entity is optional and is not configured.")
-        elif rain_state_obj is None:
-            actual_rain_value = "unavailable"
-            actual_rain_unit = None
-            rain_actuals_status = "missing"
-            missing_inputs.append("rain_actuals_missing")
-            notes.append("Actual rain entity is configured but missing.")
-        elif rain_state_obj.state in {STATE_UNAVAILABLE, STATE_UNKNOWN}:
-            actual_rain_value = str(rain_state_obj.state)
-            actual_rain_unit = rain_state_obj.attributes.get("unit_of_measurement")
-            rain_actuals_status = "unavailable"
-            missing_inputs.append("rain_actuals_unavailable")
-            notes.append("Actual rain entity is present but not reporting a usable value.")
-        else:
-            actual_rain_value = str(rain_state_obj.state)
-            actual_rain_unit = rain_state_obj.attributes.get("unit_of_measurement")
-            rain_actuals_status = "ok"
+        rain_resolution = resolve_rain_actuals_entity(self.hass, rain_actuals_entity)
+        rain_source_candidates = discover_rain_source_candidates(
+            self.hass,
+            rain_actuals_entity or None,
+        )
+        if rain_resolution.missing_input:
+            missing_inputs.append(rain_resolution.missing_input)
+        if rain_resolution.reason:
+            notes.append(rain_resolution.reason)
 
         connectivity = state_value(linked_entities.connectivity_entity_id)
         rain_state = state_value(linked_entities.rain_entity_id)
@@ -1608,7 +2377,30 @@ class RachioSupervisorCoordinator(DataUpdateCoordinator[SupervisorSnapshot]):
                 evidence.schedule_snapshots,
                 schedule_moisture_map,
                 self._acknowledged_recommendation_ids,
+                auto_moisture_write_schedule_entities,
+                self._moisture_write_status_by_rule,
+                bool(moisture_mode),
             )
+            if moisture_mode and auto_moisture_write_schedule_entities:
+                try:
+                    await self._async_execute_auto_moisture_writes(
+                        linked_entry=linked_entry,
+                        api_key=api_key,
+                        schedules=schedule_snapshots,
+                        current=current,
+                    )
+                except RachioClientError as err:
+                    notes.append(f"Automatic moisture write-back failed: {err}")
+                    self._supervisor_reason = f"Automatic moisture write-back failed: {err}"
+                schedule_snapshots = apply_moisture_mapping(
+                    self.hass,
+                    evidence.schedule_snapshots,
+                    schedule_moisture_map,
+                    self._acknowledged_recommendation_ids,
+                    auto_moisture_write_schedule_entities,
+                    self._moisture_write_status_by_rule,
+                    bool(moisture_mode),
+                )
             if not any(schedule.moisture_entity_id for schedule in schedule_snapshots):
                 missing_inputs.append("no_active_schedule_moisture_mappings")
             if data.get(CONF_MOISTURE_SENSOR_ENTITIES, []) and not any(
@@ -1643,21 +2435,11 @@ class RachioSupervisorCoordinator(DataUpdateCoordinator[SupervisorSnapshot]):
                 and not observe_first
                 and decision.get("zone_entity_id")
             ):
-                await self.hass.services.async_call(
-                    "rachio",
-                    "start_watering",
-                    {
-                        "entity_id": decision["zone_entity_id"],
-                        "duration": {"minutes": int(decision["runtime_minutes"])},
-                    },
-                    blocking=True,
+                decision = await self._async_execute_catch_up_decision(
+                    decision,
+                    current=current,
+                    source="automatic_supervision",
                 )
-                decision["status"] = "executed"
-                self._lockouts[str(decision["decision_key"])] = {
-                    "zone_label": decision.get("zone_label") or decision.get("schedule_name"),
-                    "decision_at": decision["decision_at"],
-                    "status": "executed",
-                }
             self._latest_catch_up_decision = decision
             if notifications_enabled and decision["status"] in {"executed", "deferred"}:
                 decision_key = str(decision["decision_key"])
@@ -1803,6 +2585,9 @@ class RachioSupervisorCoordinator(DataUpdateCoordinator[SupervisorSnapshot]):
         )
         data_completeness = "complete" if not missing_inputs else "warnings"
         moisture_review_items = build_moisture_review_items(schedule_snapshots)
+        zone_overview_items = build_zone_overview_items(
+            self.hass, schedule_snapshots, flow_alert_snapshots
+        )
 
         return SupervisorSnapshot(
             health=health,
@@ -1826,9 +2611,12 @@ class RachioSupervisorCoordinator(DataUpdateCoordinator[SupervisorSnapshot]):
             rain_state=rain_state,
             rain_delay_state=rain_delay_state,
             standby_state=standby_state,
-            actual_rain_value=actual_rain_value,
-            actual_rain_unit=actual_rain_unit,
-            rain_actuals_status=rain_actuals_status,
+            actual_rain_value=rain_resolution.value,
+            actual_rain_unit=rain_resolution.unit,
+            rain_actuals_status=rain_resolution.status,
+            rain_actuals_reason=rain_resolution.reason or "",
+            rain_actuals_window=rain_resolution.window,
+            rain_actuals_confidence=rain_resolution.confidence,
             controller_name=controller_name,
             controller_id=controller_id,
             last_event_summary=last_event_summary,
@@ -1870,6 +2658,9 @@ class RachioSupervisorCoordinator(DataUpdateCoordinator[SupervisorSnapshot]):
             last_refresh=current.isoformat(),
             notes=tuple(notes),
             moisture_review_items=moisture_review_items,
+            zone_overview_items=zone_overview_items,
+            rain_source_candidates=rain_source_candidates,
+            rachio_weather_probe=evidence.weather_source_probe if evidence else None,
             discovered_entities={
                 "connectivity": linked_entities.connectivity_entity_id,
                 "rain": linked_entities.rain_entity_id,
