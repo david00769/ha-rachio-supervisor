@@ -51,6 +51,7 @@ EVENT_LOOKBACK_HOURS = 168
 EXPECTED_EVENT_FRESHNESS_HOURS = 36
 DEGRADED_FAST_WINDOW_HOURS = 2
 AUTO_MOISTURE_WRITE_COOLDOWN_HOURS = 24
+ZONE_PLACEHOLDER_PATH = "/rachio_supervisor/zone-placeholder.svg"
 WORD_RE = re.compile(r"[a-z0-9]+")
 
 RAIN_MM_RE = re.compile(r"observed ([0-9.]+) mm(?: and predicted ([0-9.]+) mm)?")
@@ -1375,7 +1376,7 @@ def build_zone_overview_items(
                 "schedule_entity_id": schedule.schedule_entity_id,
                 "zone_entity_id": schedule.zone_entity_id,
                 "image_path": f"/local/rachio-supervisor/zones/{slug}.jpg",
-                "fallback_image_path": "/local/rachio-supervisor/zones/default.jpg",
+                "fallback_image_path": ZONE_PLACEHOLDER_PATH,
                 "quick_run_minutes": schedule.runtime_minutes,
                 "schedule_state": schedule_state,
                 "next_run": next_run or "not_reported",

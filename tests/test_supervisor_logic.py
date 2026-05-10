@@ -1564,6 +1564,10 @@ class RuntimeHealthAndMoistureTests(unittest.TestCase):
 
         self.assertEqual(items[0]["zone_name"], "Pots - Dawn Micro")
         self.assertEqual(items[0]["image_path"], "/local/rachio-supervisor/zones/dawn-micro-pots.jpg")
+        self.assertEqual(
+            items[0]["fallback_image_path"],
+            "/rachio_supervisor/zone-placeholder.svg",
+        )
         self.assertEqual(items[0]["next_run"], "Tue 06:00")
         self.assertEqual(items[0]["watering_days"], ["M", "W", "F"])
         self.assertEqual(items[0]["rain_skip_state"], "none")
@@ -1601,6 +1605,15 @@ class RuntimeHealthAndMoistureTests(unittest.TestCase):
         self.assertIn("Supervisor needs review", source)
         self.assertIn("Supervisor not ready", source)
         self.assertIn("Data warnings", source)
+        self.assertTrue(
+            (
+                REPO_ROOT
+                / "custom_components"
+                / "rachio_supervisor"
+                / "www"
+                / "zone-placeholder.svg"
+            ).exists()
+        )
 
     def test_apply_moisture_mapping_marks_auto_write_eligibility(self) -> None:
         schedule = ScheduleSnapshot(

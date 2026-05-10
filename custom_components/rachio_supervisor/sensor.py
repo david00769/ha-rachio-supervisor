@@ -411,6 +411,7 @@ class RachioSupervisorSensor(RachioSupervisorEntity, SensorEntity):
             return {
                 "zones": list(data.zone_overview_items),
                 "image_path_convention": "/local/rachio-supervisor/zones/<zone-slug>.jpg",
+                "fallback_image_path": "/rachio_supervisor/zone-placeholder.svg",
                 "quick_run_service": "rachio_supervisor.quick_run_zone",
             }
         if self.entity_description.key == "observed_rain_24h":

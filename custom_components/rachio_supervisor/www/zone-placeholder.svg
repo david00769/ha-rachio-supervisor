@@ -1,0 +1,21 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 640 360" role="img" aria-label="Rachio Supervisor zone placeholder">
+  <defs>
+    <linearGradient id="sky" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#35563f"/>
+      <stop offset="1" stop-color="#7e936d"/>
+    </linearGradient>
+    <linearGradient id="ground" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#58704f" stop-opacity=".65"/>
+      <stop offset="1" stop-color="#25382b" stop-opacity=".95"/>
+    </linearGradient>
+    <pattern id="rows" width="54" height="54" patternUnits="userSpaceOnUse" patternTransform="rotate(-24)">
+      <path d="M0 26H54" stroke="#ffffff" stroke-opacity=".12" stroke-width="3"/>
+    </pattern>
+  </defs>
+  <rect width="640" height="360" fill="url(#sky)"/>
+  <circle cx="526" cy="68" r="74" fill="#f4f0cf" opacity=".22"/>
+  <path d="M0 235C118 196 210 196 330 232c104 31 199 22 310-22v150H0Z" fill="url(#ground)"/>
+  <rect width="640" height="360" fill="url(#rows)" opacity=".75"/>
+  <path d="M86 286c86-64 173-86 261-66 64 15 122 11 206-31" fill="none" stroke="#d8e6c7" stroke-opacity=".34" stroke-width="10" stroke-linecap="round"/>
+  <path d="M84 286c87-41 171-50 255-25 64 19 131 13 214-23" fill="none" stroke="#15251b" stroke-opacity=".28" stroke-width="3" stroke-linecap="round"/>
+</svg>

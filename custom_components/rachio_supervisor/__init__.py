@@ -52,11 +52,17 @@ async def _async_register_static_paths(hass: HomeAssistant) -> None:
         / "www"
         / "rachio-supervisor-zone-grid-card.js"
     )
+    placeholder_path = Path(__file__).parent / "www" / "zone-placeholder.svg"
     await hass.http.async_register_static_paths(
         [
             StaticPathConfig(
                 f"/{DOMAIN}/rachio-supervisor-zone-grid-card.js",
                 str(card_path),
+                True,
+            ),
+            StaticPathConfig(
+                f"/{DOMAIN}/zone-placeholder.svg",
+                str(placeholder_path),
                 True,
             )
         ]
