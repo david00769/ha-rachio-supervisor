@@ -67,11 +67,21 @@ views:
               {% set items = state_attr('sensor.rachio_site_recommended_moisture_writes', 'moisture_review_items') or [] %}
               {% if items %}
               {% for item in items %}
-              {% set action_label = item.get('recommended_action_label') or item.get('recommended_action') or 'Review' %}
-              {% set data_quality = item.get('data_quality') %}
+              {% set action = item.get('recommended_action') or '' %}
+              {% set action_labels = {
+                'write_moisture_now': 'Write ready',
+                'resolve_write_back': 'Resolve Rachio zone',
+                'map_moisture_sensor': 'Map sensor',
+                'repair_moisture_sensor': 'Repair sensor',
+                'review_auto_catch_up': 'Review catch-up',
+                'none': 'No write needed'
+              } %}
+              {% set action_label = item.get('recommended_action_label') or action_labels.get(action, action or 'Review') %}
+              {% set band = item.get('moisture_band') %}
+              {% set data_quality = item.get('data_quality') or ('sensor_' ~ band if band in ['missing', 'unavailable', 'non_numeric'] else none) %}
               {% set last_updated = item.get('moisture_last_updated') %}
               **{{ item.schedule_name }}**  
-              {{ item.posture_note }} · `{{ item.moisture_band }}`{% if item.moisture_value and item.moisture_value not in ['unknown', 'unavailable'] %} · {{ item.moisture_value }}%{% endif %}{% if data_quality and data_quality != 'ok' %} · `{{ data_quality }}`{% endif %}<br>
+              {{ item.posture_note }} · `{{ band }}`{% if item.moisture_value and item.moisture_value not in ['unknown', 'unavailable'] %} · {{ item.moisture_value }}%{% endif %}{% if data_quality and data_quality != 'ok' %} · `{{ data_quality }}`{% endif %}<br>
               {{ action_label }}{% if item.moisture_write_back_ready %} · {{ item.moisture_write_back_ready }}{% endif %}{% if last_updated %} · updated {{ last_updated[11:16] }}{% endif %}
 
               {% endfor %}
@@ -116,10 +126,20 @@ views:
               {% set items = state_attr('sensor.rachio_site_recommended_moisture_writes', 'moisture_review_items') or [] %}
               {% if items %}
               {% for item in items %}
-              {% set action_label = item.get('recommended_action_label') or item.get('recommended_action') or 'Review' %}
-              {% set data_quality = item.get('data_quality') %}
+              {% set action = item.get('recommended_action') or '' %}
+              {% set action_labels = {
+                'write_moisture_now': 'Write ready',
+                'resolve_write_back': 'Resolve Rachio zone',
+                'map_moisture_sensor': 'Map sensor',
+                'repair_moisture_sensor': 'Repair sensor',
+                'review_auto_catch_up': 'Review catch-up',
+                'none': 'No write needed'
+              } %}
+              {% set action_label = item.get('recommended_action_label') or action_labels.get(action, action or 'Review') %}
+              {% set band = item.get('moisture_band') %}
+              {% set data_quality = item.get('data_quality') or ('sensor_' ~ band if band in ['missing', 'unavailable', 'non_numeric'] else none) %}
               **{{ item.schedule_name }}**<br>
-              `{{ item.moisture_band }}` · {{ action_label }} · `{{ item.review_state }}`{% if data_quality and data_quality != 'ok' %} · `{{ data_quality }}`{% endif %}
+              `{{ band }}` · {{ action_label }} · `{{ item.review_state }}`{% if data_quality and data_quality != 'ok' %} · `{{ data_quality }}`{% endif %}
 
               {% endfor %}
               {% else %}
