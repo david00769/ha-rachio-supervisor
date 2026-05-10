@@ -14,6 +14,7 @@
           "observe_first": "Start in observe-first mode",
           "allow_moisture_write_back": "Allow moisture write-back mode",
           "enable_persistent_notifications": "Enable persistent notifications",
+          "import_rachio_zone_photos": "Import Rachio zone photos",
           "safe_window_end_hour": "Safe window end hour",
           "health_reconcile_hour": "Daily healthy reconcile hour",
           "health_reconcile_minute": "Daily healthy reconcile minute"
@@ -51,6 +52,7 @@
           "observe_first": "Start in observe-first mode",
           "allow_moisture_write_back": "Allow moisture write-back mode",
           "enable_persistent_notifications": "Enable persistent notifications",
+          "import_rachio_zone_photos": "Import Rachio zone photos",
           "safe_window_end_hour": "Safe window end hour",
           "health_reconcile_hour": "Daily healthy reconcile hour",
           "health_reconcile_minute": "Daily healthy reconcile minute"

@@ -372,6 +372,7 @@ integration_init = importlib.import_module("custom_components.rachio_supervisor"
 config_flow = importlib.import_module("custom_components.rachio_supervisor.config_flow")
 coordinator_module = importlib.import_module("custom_components.rachio_supervisor.coordinator")
 diagnostics = importlib.import_module("custom_components.rachio_supervisor.diagnostics")
+photo_import = importlib.import_module("custom_components.rachio_supervisor.photo_import")
 sensor_module = importlib.import_module("custom_components.rachio_supervisor.sensor")
 from custom_components.rachio_supervisor.const import DOMAIN
 from custom_components.rachio_supervisor.coordinator import (
@@ -381,6 +382,7 @@ from custom_components.rachio_supervisor.coordinator import (
     ScheduleSnapshot,
     SupervisorSnapshot,
     apply_moisture_mapping,
+    build_rachio_evidence,
     build_rachio_weather_probe,
     build_flow_alert_snapshots,
     build_moisture_review_items,
@@ -390,6 +392,11 @@ from custom_components.rachio_supervisor.coordinator import (
     evaluate_catch_up_decision,
     observed_rain_24h,
     resolve_rain_actuals_entity,
+)
+from custom_components.rachio_supervisor.discovery import (
+    LinkedRachioEntities,
+    ScheduleEntityRef,
+    ZoneEntityRef,
 )
 
 
@@ -408,6 +415,185 @@ def _event(
         "subType": sub_type,
         "summary": summary,
     }
+
+
+class _ImageResponse:
+    def __init__(
+        self,
+        payload: bytes,
+        *,
+        content_type: str = "image/jpeg",
+        content_length: int | None = None,
+    ) -> None:
+        self._payload = payload
+        self.headers = {
+            "content-type": content_type,
+            "content-length": str(content_length if content_length is not None else len(payload)),
+        }
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *_args) -> None:
+        return None
+
+    def read(self, _size: int = -1) -> bytes:
+        return self._payload
+
+
+class ZonePhotoImportTests(unittest.TestCase):
+    def _linked_entities(self) -> LinkedRachioEntities:
+        return LinkedRachioEntities(
+            connectivity_entity_id=None,
+            rain_entity_id=None,
+            rain_delay_entity_id=None,
+            standby_entity_id=None,
+            zone_switches=("switch.zone_pots",),
+            schedule_switches=("switch.schedule_pots",),
+            zone_entities=(
+                ZoneEntityRef("switch.zone_pots", "Pots Dawn Micro", "zone-1"),
+            ),
+            schedule_entities=(
+                ScheduleEntityRef("switch.schedule_pots", "Pots - Dawn Micro", "rule-1"),
+            ),
+            all_entities=("switch.zone_pots", "switch.schedule_pots"),
+        )
+
+    def _client(self, *, image_url: str | None = "https://example.test/zone.jpg"):
+        class _Client:
+            def __init__(self) -> None:
+                self.zone_calls = 0
+
+            def list_person_devices(self):
+                return [
+                    {
+                        "id": "device-1",
+                        "name": "Test Controller",
+                        "zones": [
+                            {"id": "zone-1", "name": "Pots Dawn Micro", "enabled": True}
+                        ],
+                        "scheduleRules": [
+                            {
+                                "id": "rule-1",
+                                "name": "Pots - Dawn Micro",
+                                "enabled": True,
+                                "totalDuration": 180,
+                            }
+                        ],
+                    }
+                ]
+
+            def list_device_events(self, *_args, **_kwargs):
+                return []
+
+            def list_device_webhooks(self, _device_id):
+                return []
+
+            def get_zone(self, _zone_id):
+                self.zone_calls += 1
+                return {"id": "zone-1", "imageUrl": image_url} if image_url else {"id": "zone-1"}
+
+        return _Client()
+
+    def test_import_disabled_never_fetches_zone_detail(self) -> None:
+        client = self._client()
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            evidence = build_rachio_evidence(
+                client,
+                self._linked_entities(),
+                1,
+                True,
+                "Test",
+                None,
+                None,
+                set(),
+                set(),
+                set(),
+                False,
+                lambda *parts: str(root.joinpath(*parts)),
+            )
+
+        schedule = evidence.schedule_snapshots[0]
+        self.assertEqual(client.zone_calls, 0)
+        self.assertEqual(schedule.photo_import_status, "disabled")
+        self.assertFalse(schedule.rachio_image_available)
+
+    def test_zone_image_url_imports_to_cache(self) -> None:
+        client = self._client()
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            with patch.object(
+                photo_import.urllib.request,
+                "urlopen",
+                return_value=_ImageResponse(b"\xff\xd8fake-jpeg\xff\xd9"),
+            ):
+                result = photo_import.import_rachio_zone_photo(
+                    client=client,
+                    zone_id="zone-1",
+                    config_path=lambda *parts: str(root.joinpath(*parts)),
+                    import_enabled=True,
+                )
+            path, url = photo_import.imported_zone_photo_paths(
+                lambda *parts: str(root.joinpath(*parts)),
+                "zone-1",
+            )
+            exists = path.exists()
+
+        self.assertEqual(result.status, "imported")
+        self.assertTrue(result.rachio_image_available)
+        self.assertEqual(url, "/local/rachio-supervisor/imported-zones/zone-1.jpg")
+        self.assertTrue(exists)
+
+    def test_missing_image_url_uses_placeholder_metadata(self) -> None:
+        client = self._client(image_url=None)
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            result = photo_import.import_rachio_zone_photo(
+                client=client,
+                zone_id="zone-1",
+                config_path=lambda *parts: str(root.joinpath(*parts)),
+                import_enabled=True,
+            )
+
+        self.assertEqual(result.status, "missing")
+        self.assertFalse(result.rachio_image_available)
+
+    def test_rejects_bad_content_type_and_oversized_image(self) -> None:
+        client = self._client()
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            with patch.object(
+                photo_import.urllib.request,
+                "urlopen",
+                return_value=_ImageResponse(b"not image", content_type="text/plain"),
+            ):
+                bad_type = photo_import.import_rachio_zone_photo(
+                    client=client,
+                    zone_id="zone-1",
+                    config_path=lambda *parts: str(root.joinpath(*parts)),
+                    import_enabled=True,
+                )
+            with patch.object(
+                photo_import.urllib.request,
+                "urlopen",
+                return_value=_ImageResponse(
+                    b"",
+                    content_type="image/jpeg",
+                    content_length=photo_import.MAX_IMAGE_BYTES + 1,
+                ),
+            ):
+                oversized = photo_import.import_rachio_zone_photo(
+                    client=client,
+                    zone_id="zone-2",
+                    config_path=lambda *parts: str(root.joinpath(*parts)),
+                    import_enabled=True,
+                )
+
+        self.assertEqual(bad_type.status, "rejected")
+        self.assertIn("unsupported_content_type", bad_type.reason or "")
+        self.assertEqual(oversized.status, "rejected")
+        self.assertEqual(oversized.reason, "image_too_large")
 
 
 class FlowAlertLifecycleTests(unittest.TestCase):
@@ -1565,6 +1751,7 @@ class RuntimeHealthAndMoistureTests(unittest.TestCase):
 
         self.assertEqual(items[0]["zone_name"], "Pots - Dawn Micro")
         self.assertEqual(items[0]["image_path"], "/rachio_supervisor/zone-placeholder.svg")
+        self.assertEqual(items[0]["image_source"], "placeholder")
         self.assertEqual(
             items[0]["suggested_image_path"],
             "/local/rachio-supervisor/zones/dawn-micro-pots.jpg",
@@ -1573,6 +1760,8 @@ class RuntimeHealthAndMoistureTests(unittest.TestCase):
             items[0]["fallback_image_path"],
             "/rachio_supervisor/zone-placeholder.svg",
         )
+        self.assertFalse(items[0]["rachio_image_available"])
+        self.assertEqual(items[0]["photo_import_status"], "disabled")
         self.assertEqual(items[0]["next_run"], "Tue 06:00")
         self.assertEqual(items[0]["watering_days"], ["M", "W", "F"])
         self.assertEqual(items[0]["rain_skip_state"], "none")
@@ -1607,6 +1796,9 @@ class RuntimeHealthAndMoistureTests(unittest.TestCase):
             summary="ran",
             threshold_mm=None,
             observed_mm=None,
+            imported_image_path="/local/rachio-supervisor/imported-zones/zone-1.jpg",
+            rachio_image_available=True,
+            photo_import_status="cached",
         )
         with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)
@@ -1624,6 +1816,7 @@ class RuntimeHealthAndMoistureTests(unittest.TestCase):
             items[0]["image_path"],
             "/local/rachio-supervisor/zones/dawn-micro-pots.jpg",
         )
+        self.assertEqual(items[0]["image_source"], "local_override")
         self.assertEqual(
             items[0]["fallback_image_path"],
             "/rachio_supervisor/zone-placeholder.svg",
@@ -2105,6 +2298,19 @@ class ConfigFlowBehaviorTests(unittest.TestCase):
         )
 
         self.assertEqual(marker.default, ["switch.schedule_pots"])
+
+    def test_flow_schema_includes_optional_rachio_photo_import(self) -> None:
+        schema = config_flow._flow_schema(
+            [("entry-1", "Sugarloaf Rachio")],
+            {"import_rachio_zone_photos": True},
+        )
+        marker = next(
+            marker
+            for marker in schema.value
+            if getattr(marker, "value", None) == "import_rachio_zone_photos"
+        )
+
+        self.assertTrue(marker.default)
 
 
 class DiagnosticsAndEntityTests(unittest.TestCase):

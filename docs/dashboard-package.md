@@ -167,8 +167,11 @@ includes:
 - `schedule_entity_id`
 - `zone_entity_id`
 - `image_path`
+- `image_source`
 - `suggested_image_path`
 - `fallback_image_path`
+- `rachio_image_available`
+- `photo_import_status`
 - `quick_run_minutes`
 - `next_run`
 - `watering_days`
@@ -180,20 +183,23 @@ includes:
 - `moisture_band`
 - `flow_alert_state`
 
-`image_path` points at a packaged placeholder unless the matching optional local
-photo exists under `/config/www/rachio-supervisor/zones/`. `suggested_image_path`
-shows the filename convention to use for adding real zone photos without causing
-browser 404s on a fresh install.
+`image_path` always points at a loadable image: a local override, an imported
+Rachio photo, or the packaged placeholder. `image_source` records which one is
+active. `suggested_image_path` shows the filename convention to use for manual
+local overrides without causing browser 404s on a fresh install.
 - `plant_note`
 - `detail_note`
 
-Use real zone photos at:
+Manual local overrides win over imported photos. Upload overrides to:
 
 `/local/rachio-supervisor/zones/<zone-slug>.jpg`
 
-Fallback photo:
+If `import_rachio_zone_photos` is enabled, the integration caches available
+Rachio zone photos under:
 
-`/local/rachio-supervisor/zones/default.jpg`
+`/local/rachio-supervisor/imported-zones/<zone-id>.jpg`
+
+The packaged placeholder remains the final fallback.
 
 The packaged card uses the real `zone_entity_id` or `schedule_entity_id` from
 the overview payload when it calls `rachio_supervisor.quick_run_zone`.

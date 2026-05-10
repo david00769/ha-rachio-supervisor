@@ -27,9 +27,10 @@ still keeping the default install observe-first:
 - site-level supervisor sensors expose health, linked controller posture,
   actual-rain input status, and discovered zone counts
 - the site-level `Zone overview` sensor exposes a visual dashboard payload for
-  each discovered zone: image path, zone/schedule ids, quick-run minutes, next
-  run if HA exposes one, day chips, water/skip badge, rain-skip state,
-  Supervisor badge, moisture band, flow-alert state, and plant/detail notes
+  each discovered zone: resolved image path/source, optional Rachio-import
+  status, zone/schedule ids, quick-run minutes, next run if HA exposes one, day
+  chips, water/skip badge, rain-skip state, Supervisor badge, moisture band,
+  flow-alert state, and plant/detail notes
 - the integration serves a lightweight Lovelace custom card at
   `/rachio_supervisor/rachio-supervisor-zone-grid-card.js`; this is the
   recommended zone-first dashboard surface and renders zone photos, compact
@@ -137,9 +138,8 @@ The deeper irrigation logic is still pending:
 - richer missed-run recurrence handling beyond the current conservative model
 - deeper webhook-quality reasoning beyond registration health
 - more polished dashboard/action workflow for operator execution
-- live dashboards should provide zone photos under
-  `/local/rachio-supervisor/zones/` with real zone photos exported from Rachio
-  or uploaded to Home Assistant
+- optional zone photos can be imported from Rachio or provided as local Home
+  Assistant overrides, but the packaged placeholder is always available
 - native flow calibration execution through Rachio is not implemented because
   Rachio's public API does not currently expose the native calibration command
   or calibrated-flow fields; the Supervisor can verify and clear its own review
@@ -296,13 +296,15 @@ when the runtime is healthy and only adds weight for degraded health, webhook
 issues, catch-up review, recommended moisture writes, flow alerts, or data
 warnings.
 
-For the best operator surface, upload zone photos to:
+Zone photos are optional. The card always has a packaged placeholder. If
+`import_rachio_zone_photos` is enabled, the integration caches available Rachio
+zone photos under:
+
+`/local/rachio-supervisor/imported-zones/<zone-id>.jpg`
+
+Manual local overrides win over imported photos. Upload overrides to:
 
 `/local/rachio-supervisor/zones/<zone-slug>.jpg`
-
-and provide:
-
-`/local/rachio-supervisor/zones/default.jpg`
 
 Quick Run from the card is manual, editable, and confirmation-gated. It starts
 the selected Rachio zone only for the chosen duration and does not enable

@@ -24,6 +24,7 @@ from .const import (
     CONF_ENABLE_PERSISTENT_NOTIFICATIONS,
     CONF_HEALTH_RECONCILE_HOUR,
     CONF_HEALTH_RECONCILE_MINUTE,
+    CONF_IMPORT_RACHIO_ZONE_PHOTOS,
     CONF_MOISTURE_SENSOR_ENTITIES,
     CONF_OBSERVE_FIRST,
     CONF_RACHIO_CONFIG_ENTRY_ID,
@@ -36,6 +37,7 @@ from .const import (
     DEFAULT_ENABLE_PERSISTENT_NOTIFICATIONS,
     DEFAULT_HEALTH_RECONCILE_HOUR,
     DEFAULT_HEALTH_RECONCILE_MINUTE,
+    DEFAULT_IMPORT_RACHIO_ZONE_PHOTOS,
     DEFAULT_SAFE_WINDOW_END_HOUR,
     DOMAIN,
     WEBHOOK_CONST_ID,
@@ -46,6 +48,7 @@ from .discovery import (
     ZoneEntityRef,
     discover_linked_entities,
 )
+from .photo_import import imported_zone_photo_paths, import_rachio_zone_photo
 from .rachio_api import RachioClient, RachioClientError
 
 EVENT_LOOKBACK_HOURS = 168
@@ -152,6 +155,10 @@ class ScheduleSnapshot:
     auto_moisture_write_enabled: bool = False
     auto_moisture_write_status: str = "off"
     last_moisture_write_status: str | None = None
+    imported_image_path: str | None = None
+    rachio_image_available: bool = False
+    photo_import_status: str = "disabled"
+    photo_import_reason: str | None = None
 
 
 @dataclass(slots=True)
@@ -1306,6 +1313,20 @@ def _existing_local_zone_image_path(hass: HomeAssistant, slug: str) -> str | Non
     return None
 
 
+def _cached_imported_zone_image_path(hass: HomeAssistant, zone_id: str | None) -> str | None:
+    """Return the imported Rachio image URL only when the cached file exists."""
+    if not zone_id:
+        return None
+    config = getattr(hass, "config", None)
+    path_getter = getattr(config, "path", None)
+    if not callable(path_getter):
+        return None
+    image_path, image_url = imported_zone_photo_paths(path_getter, zone_id)
+    if image_path.exists():
+        return image_url
+    return None
+
+
 def build_zone_overview_items(
     hass: HomeAssistant,
     schedules: tuple[ScheduleSnapshot, ...],
@@ -1316,6 +1337,19 @@ def build_zone_overview_items(
     for index, schedule in enumerate(schedules, start=1):
         slug = "-".join(sorted(normalize_words(schedule.name))) or f"zone-{index}"
         local_image_path = _existing_local_zone_image_path(hass, slug)
+        imported_image_path = schedule.imported_image_path or _cached_imported_zone_image_path(
+            hass,
+            schedule.controller_zone_id,
+        )
+        if local_image_path:
+            image_path = local_image_path
+            image_source = "local_override"
+        elif imported_image_path:
+            image_path = imported_image_path
+            image_source = "rachio_import"
+        else:
+            image_path = ZONE_PLACEHOLDER_PATH
+            image_source = "placeholder"
         next_run = _state_attr_value(
             hass,
             schedule.schedule_entity_id,
@@ -1389,9 +1423,13 @@ def build_zone_overview_items(
                 "schedule_name": schedule.name,
                 "schedule_entity_id": schedule.schedule_entity_id,
                 "zone_entity_id": schedule.zone_entity_id,
-                "image_path": local_image_path or ZONE_PLACEHOLDER_PATH,
+                "image_path": image_path,
+                "image_source": image_source,
                 "suggested_image_path": f"/local/rachio-supervisor/zones/{slug}.jpg",
                 "fallback_image_path": ZONE_PLACEHOLDER_PATH,
+                "rachio_image_available": schedule.rachio_image_available,
+                "photo_import_status": schedule.photo_import_status,
+                "photo_import_reason": schedule.photo_import_reason,
                 "quick_run_minutes": schedule.runtime_minutes,
                 "schedule_state": schedule_state,
                 "next_run": next_run or "not_reported",
@@ -1677,6 +1715,8 @@ def build_rachio_evidence(
     auto_catch_up_schedule_entities: set[str],
     auto_missed_run_schedule_entities: set[str],
     acknowledged_flow_alert_ids: set[str],
+    import_zone_photos: bool = False,
+    config_path=None,
 ) -> RachioEvidenceSnapshot:
     """Build a site-level evidence snapshot from the public Rachio API."""
     devices = client.list_person_devices()
@@ -1770,6 +1810,33 @@ def build_rachio_evidence(
         matched_schedule_entity = match_schedule_entity(name, linked_entities)
         matched_zone_entity = match_zone_entity(name, linked_entities)
         controller_zone_id = match_controller_zone(name, controller)
+        imported_image_path = None
+        photo_import_status = "disabled"
+        photo_import_reason = None
+        rachio_image_available = False
+        if import_zone_photos and callable(config_path):
+            slug = "-".join(sorted(normalize_words(name))) or f"zone-{len(schedule_snapshots) + 1}"
+            local_override = Path(
+                config_path("www", "rachio-supervisor", "zones", f"{slug}.jpg")
+            )
+            if local_override.exists():
+                photo_import_status = "disabled"
+            else:
+                photo_result = import_rachio_zone_photo(
+                    client=client,
+                    zone_id=controller_zone_id,
+                    config_path=config_path,
+                    import_enabled=True,
+                )
+                photo_import_status = photo_result.status
+                photo_import_reason = photo_result.reason
+                rachio_image_available = photo_result.rachio_image_available
+                imported_path, imported_url = imported_zone_photo_paths(
+                    config_path,
+                    controller_zone_id or "",
+                )
+                if imported_path.exists():
+                    imported_image_path = imported_url
         schedule_entity_id = (
             matched_schedule_entity.entity_id if matched_schedule_entity else None
         )
@@ -1845,6 +1912,10 @@ def build_rachio_evidence(
                 summary=reason,
                 threshold_mm=threshold_mm,
                 observed_mm=observed_mm,
+                imported_image_path=imported_image_path,
+                rachio_image_available=rachio_image_available,
+                photo_import_status=photo_import_status,
+                photo_import_reason=photo_import_reason,
             )
         )
 
@@ -2332,6 +2403,13 @@ class RachioSupervisorCoordinator(DataUpdateCoordinator[SupervisorSnapshot]):
                     auto_catch_up_schedule_entities,
                     auto_missed_run_schedule_entities,
                     self._acknowledged_flow_alert_ids,
+                    bool(
+                        data.get(
+                            CONF_IMPORT_RACHIO_ZONE_PHOTOS,
+                            DEFAULT_IMPORT_RACHIO_ZONE_PHOTOS,
+                        )
+                    ),
+                    self.hass.config.path,
                 )
             except RachioClientError as err:
                 notes.append(f"Rachio API evidence fetch failed: {err}")

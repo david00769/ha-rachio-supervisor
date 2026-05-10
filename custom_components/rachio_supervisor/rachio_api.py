@@ -10,6 +10,7 @@ from typing import Any
 
 PERSON_INFO_URL = "https://api.rach.io/1/public/person/info"
 PERSON_URL = "https://api.rach.io/1/public/person/{person_id}"
+ZONE_URL = "https://api.rach.io/1/public/zone/{zone_id}"
 ZONE_SET_MOISTURE_URL = "https://api.rach.io/1/public/zone/setMoisturePercent"
 DEVICE_EVENTS_URL = (
     "https://api.rach.io/1/public/device/{device_id}/event"
@@ -97,6 +98,11 @@ class RachioClient:
         data = self._http_json(
             DEVICE_FORECAST_URL.format(device_id=device_id, units=units)
         )
+        return data if isinstance(data, dict) else {}
+
+    def get_zone(self, zone_id: str) -> dict[str, Any]:
+        """Return a public Rachio zone payload."""
+        data = self._http_json(ZONE_URL.format(zone_id=zone_id))
         return data if isinstance(data, dict) else {}
 
     def set_zone_moisture_percent(self, zone_id: str, moisture_percent: float) -> None:

@@ -19,6 +19,7 @@ from .const import (
     CONF_ENABLE_PERSISTENT_NOTIFICATIONS,
     CONF_HEALTH_RECONCILE_HOUR,
     CONF_HEALTH_RECONCILE_MINUTE,
+    CONF_IMPORT_RACHIO_ZONE_PHOTOS,
     CONF_MOISTURE_SENSOR_ENTITIES,
     CONF_OBSERVE_FIRST,
     CONF_RACHIO_CONFIG_ENTRY_ID,
@@ -34,6 +35,7 @@ from .const import (
     DEFAULT_ENABLE_PERSISTENT_NOTIFICATIONS,
     DEFAULT_HEALTH_RECONCILE_HOUR,
     DEFAULT_HEALTH_RECONCILE_MINUTE,
+    DEFAULT_IMPORT_RACHIO_ZONE_PHOTOS,
     DEFAULT_MOISTURE_SENSOR_ENTITIES,
     DEFAULT_SCHEDULE_MOISTURE_MAP,
     DEFAULT_OBSERVE_FIRST,
@@ -166,6 +168,13 @@ def _flow_schema(
             default=defaults.get(
                 CONF_ENABLE_PERSISTENT_NOTIFICATIONS,
                 DEFAULT_ENABLE_PERSISTENT_NOTIFICATIONS,
+            ),
+        ): selector.BooleanSelector(),
+        vol.Required(
+            CONF_IMPORT_RACHIO_ZONE_PHOTOS,
+            default=defaults.get(
+                CONF_IMPORT_RACHIO_ZONE_PHOTOS,
+                DEFAULT_IMPORT_RACHIO_ZONE_PHOTOS,
             ),
         ): selector.BooleanSelector(),
         vol.Required(
