@@ -796,6 +796,7 @@ class RuntimeHealthAndMoistureTests(unittest.TestCase):
             summary="Rear Protea review summary",
             threshold_mm=6.35,
             observed_mm=None,
+            moisture_last_updated="2026-05-10T02:12:51+00:00",
         )
 
         items = build_moisture_review_items((schedule,))
@@ -804,6 +805,12 @@ class RuntimeHealthAndMoistureTests(unittest.TestCase):
         self.assertEqual(items[0]["schedule_name"], "Rear Protea Shade Bed")
         self.assertEqual(items[0]["moisture_band"], "wet")
         self.assertEqual(items[0]["recommended_action"], "none")
+        self.assertEqual(items[0]["recommended_action_label"], "No write needed")
+        self.assertEqual(items[0]["data_quality"], "ok")
+        self.assertEqual(
+            items[0]["moisture_last_updated"],
+            "2026-05-10T02:12:51+00:00",
+        )
 
 
 class ConfigFlowBehaviorTests(unittest.TestCase):

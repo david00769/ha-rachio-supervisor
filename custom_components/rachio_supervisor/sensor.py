@@ -616,6 +616,7 @@ class RachioSupervisorScheduleSensor(RachioSupervisorEntity, SensorEntity):
             "moisture_entity_id": schedule.moisture_entity_id,
             "moisture_value": schedule.moisture_value,
             "moisture_status": schedule.moisture_status,
+            "moisture_last_updated": schedule.moisture_last_updated,
             "moisture_write_back_ready": schedule.moisture_write_back_ready,
             "recommended_action": schedule.recommended_action,
             "review_state": schedule.review_state,

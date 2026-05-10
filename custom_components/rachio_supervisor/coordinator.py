@@ -94,6 +94,7 @@ class ScheduleSnapshot:
     summary: str
     threshold_mm: float | None
     observed_mm: float | None
+    moisture_last_updated: str | None = None
 
 
 @dataclass(slots=True)
@@ -611,20 +612,22 @@ def match_controller_zone(
 def resolve_moisture_entity(
     hass: HomeAssistant,
     mapped_entity_id: str | None,
-) -> tuple[str | None, str | None, str]:
+) -> tuple[str | None, str | None, str, str | None]:
     """Resolve one explicit moisture entity mapping and derive a moisture band."""
     if not mapped_entity_id:
-        return None, None, "unmapped"
+        return None, None, "unmapped", None
 
     state = hass.states.get(mapped_entity_id)
     if state is None:
-        return mapped_entity_id, None, "missing"
+        return mapped_entity_id, None, "missing", None
+    state_last_updated = getattr(state, "last_updated", None)
+    last_updated = state_last_updated.isoformat() if state_last_updated else None
     if state.state in {STATE_UNAVAILABLE, STATE_UNKNOWN}:
-        return mapped_entity_id, str(state.state), "unavailable"
+        return mapped_entity_id, str(state.state), "unavailable", last_updated
     try:
         numeric = float(state.state)
     except (TypeError, ValueError):
-        return mapped_entity_id, str(state.state), "non_numeric"
+        return mapped_entity_id, str(state.state), "non_numeric", last_updated
 
     if numeric < DRY_THRESHOLD:
         band = "dry"
@@ -632,7 +635,7 @@ def resolve_moisture_entity(
         band = "wet"
     else:
         band = "target"
-    return mapped_entity_id, f"{numeric:g}", band
+    return mapped_entity_id, f"{numeric:g}", band, last_updated
 
 
 def apply_moisture_mapping(
@@ -649,7 +652,12 @@ def apply_moisture_mapping(
             if schedule.schedule_entity_id
             else None
         )
-        moisture_entity_id, moisture_value, moisture_band = resolve_moisture_entity(
+        (
+            moisture_entity_id,
+            moisture_value,
+            moisture_band,
+            moisture_last_updated,
+        ) = resolve_moisture_entity(
             hass,
             mapped_entity_id,
         )
@@ -704,6 +712,7 @@ def apply_moisture_mapping(
                 summary=schedule.summary,
                 threshold_mm=schedule.threshold_mm,
                 observed_mm=schedule.observed_mm,
+                moisture_last_updated=moisture_last_updated,
             )
         )
     return tuple(hydrated)
@@ -748,6 +757,30 @@ def evaluate_cached_evidence_health(
     )
 
 
+def moisture_action_label(action: str) -> str:
+    """Return operator-facing copy for a moisture recommendation token."""
+    return {
+        "write_moisture_now": "Write ready",
+        "resolve_write_back": "Resolve Rachio zone",
+        "map_moisture_sensor": "Map sensor",
+        "repair_moisture_sensor": "Repair sensor",
+        "review_auto_catch_up": "Review catch-up",
+        "none": "No write needed",
+        "pending_moisture_eval": "Awaiting evaluation",
+    }.get(action, action.replace("_", " ").title())
+
+
+def moisture_data_quality(moisture_band: str) -> str:
+    """Classify whether a mapped moisture reading is usable for decisions."""
+    if moisture_band in {"dry", "target", "wet"}:
+        return "ok"
+    if moisture_band == "unmapped":
+        return "unmapped"
+    if moisture_band in {"missing", "unavailable", "non_numeric"}:
+        return f"sensor_{moisture_band}"
+    return "unknown"
+
+
 def build_moisture_review_items(
     schedules: tuple[ScheduleSnapshot, ...],
 ) -> tuple[dict[str, object], ...]:
@@ -784,9 +817,14 @@ def build_moisture_review_items(
                 "moisture_band": schedule.moisture_band,
                 "posture_note": posture_note,
                 "recommended_action": schedule.recommended_action,
+                "recommended_action_label": moisture_action_label(
+                    schedule.recommended_action
+                ),
                 "review_state": schedule.review_state,
                 "moisture_write_back_ready": schedule.moisture_write_back_ready,
                 "moisture_value": schedule.moisture_value,
+                "moisture_last_updated": schedule.moisture_last_updated,
+                "data_quality": moisture_data_quality(schedule.moisture_band),
                 "_rank": rank,
             }
         )

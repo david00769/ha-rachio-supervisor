@@ -11,9 +11,12 @@ views:
           - type: markdown
             title: Status rail
             content: |
-              | Health | Webhook | Rain | Catch-up | Moisture | Flow |
-              | --- | --- | --- | --- | --- | --- |
-              | {{ states('sensor.rachio_site_health') }} | {{ states('sensor.rachio_site_webhook_health') }} | {{ states('sensor.rachio_site_observed_rain_24h') }} | {{ states('sensor.rachio_site_catch_up_evidence') }} | {{ states('sensor.rachio_site_recommended_moisture_writes') }} | {{ states('sensor.rachio_site_active_flow_alerts') }} |
+              **Health** {{ states('sensor.rachio_site_health') }} ·
+              **Webhook** {{ states('sensor.rachio_site_webhook_health') }} ·
+              **Rain 24h** {{ states('sensor.rachio_site_observed_rain_24h') }} ·
+              **Catch-up** {{ states('sensor.rachio_site_catch_up_evidence') }} ·
+              **Moisture** {{ states('sensor.rachio_site_recommended_moisture_writes') }} ·
+              **Flow** {{ states('sensor.rachio_site_active_flow_alerts') }}
 
               {% set reason = state_attr('sensor.rachio_site_health', 'supervisor_reason') or 'Runtime posture is not reported yet.' %}
               {% set missing = state_attr('sensor.rachio_site_health', 'missing_inputs') or [] %}
@@ -65,8 +68,8 @@ views:
               {% if items %}
               {% for item in items %}
               **{{ item.schedule_name }}**  
-              {{ item.posture_note }} · `{{ item.moisture_band }}`{% if item.moisture_value and item.moisture_value not in ['unknown', 'unavailable'] %} · {{ item.moisture_value }}%{% endif %}<br>
-              {{ item.recommended_action }}{% if item.moisture_write_back_ready %} · {{ item.moisture_write_back_ready }}{% endif %}
+              {{ item.posture_note }} · `{{ item.moisture_band }}`{% if item.moisture_value and item.moisture_value not in ['unknown', 'unavailable'] %} · {{ item.moisture_value }}%{% endif %}{% if item.data_quality and item.data_quality != 'ok' %} · `{{ item.data_quality }}`{% endif %}<br>
+              {{ item.recommended_action_label or item.recommended_action }}{% if item.moisture_write_back_ready %} · {{ item.moisture_write_back_ready }}{% endif %}{% if item.moisture_last_updated %} · updated {{ item.moisture_last_updated[11:16] }}{% endif %}
 
               {% endfor %}
               {% else %}
@@ -95,7 +98,7 @@ views:
               {% for alert in alerts %}
               **{{ alert.zone_name or alert.subject or 'Flow alert' }}**<br>
               `{{ alert.status }}`{% if alert.delta_percent is defined %} · {{ alert.delta_percent }}% baseline delta{% endif %}<br>
-              {{ alert.recommended_action or 'Review calibration before clearing.' }}
+              {% if alert.recommended_action == 'clear_review' %}Eligible to clear review{% else %}{{ alert.recommended_action or 'Review calibration before clearing.' }}{% endif %}
 
               {% endfor %}
               {% else %}
@@ -111,7 +114,7 @@ views:
               {% if items %}
               {% for item in items %}
               **{{ item.schedule_name }}**<br>
-              `{{ item.moisture_band }}` · `{{ item.review_state }}` · `{{ item.moisture_write_back_ready }}`
+              `{{ item.moisture_band }}` · {{ item.recommended_action_label or item.recommended_action }} · `{{ item.review_state }}`{% if item.data_quality and item.data_quality != 'ok' %} · `{{ item.data_quality }}`{% endif %}
 
               {% endfor %}
               {% else %}
