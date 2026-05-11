@@ -43,13 +43,27 @@ from .const import (
     DEFAULT_ZONE_COUNT,
     DOMAIN,
 )
-from .discovery import rachio_entry_options, schedule_entity_options
+from .discovery import (
+    discover_linked_entities,
+    rachio_entry_options,
+    schedule_entity_options,
+)
 
 _LOGGER = logging.getLogger(__name__)
 
 MOISTURE_SENSOR_FIELD = "moisture_sensor_entity"
 MOISTURE_SCHEDULE_CONTEXT_FIELD = "schedule_name"
 UNMAPPED_SENTINEL = "__unmapped__"
+MOISTURE_SENSOR_HINTS = ("soil_moisture", "soil moisture", "moisture")
+MOISTURE_SENSOR_EXCLUDE_HINTS = (
+    "battery",
+    "calibration",
+    "humidity",
+    "linkquality",
+    "sampling",
+    "temperature",
+    "warning",
+)
 
 
 def _moisture_field_key(_schedule_label: str) -> str:
@@ -98,6 +112,62 @@ def _selected_values_in_options(
     return [value for value in values if isinstance(value, str) and value in valid_values]
 
 
+def discover_moisture_sensor_entities(hass) -> list[str]:
+    """Return likely soil-moisture sensor entities for config defaults."""
+    states_obj = getattr(hass, "states", None)
+    async_all = getattr(states_obj, "async_all", None)
+    if not callable(async_all):
+        return []
+    try:
+        states = list(async_all("sensor"))
+    except TypeError:
+        states = [
+            state
+            for state in async_all()
+            if str(getattr(state, "entity_id", "")).startswith("sensor.")
+        ]
+
+    candidates: list[tuple[int, str]] = []
+    for state in states:
+        entity_id = str(getattr(state, "entity_id", ""))
+        attributes = getattr(state, "attributes", {}) or {}
+        label = " ".join(
+            [
+                entity_id,
+                str(attributes.get("friendly_name", "")),
+                str(attributes.get("device_class", "")),
+                str(attributes.get("unit_of_measurement", "")),
+            ]
+        ).lower()
+        if any(excluded in label for excluded in MOISTURE_SENSOR_EXCLUDE_HINTS):
+            continue
+        if not any(hint in label for hint in MOISTURE_SENSOR_HINTS):
+            continue
+        score = 1
+        if "soil" in label:
+            score += 1
+        if "moisture" in label:
+            score += 1
+        if attributes.get("unit_of_measurement") == "%":
+            score += 1
+        candidates.append((score, entity_id))
+
+    candidates.sort(key=lambda item: (-item[0], item[1]))
+    return [entity_id for _score, entity_id in candidates]
+
+
+def discover_zone_count(hass, rachio_config_entry_id: str | None) -> int | None:
+    """Return discovered linked Rachio zone count for form defaults."""
+    if not rachio_config_entry_id:
+        return None
+    try:
+        linked_entities = discover_linked_entities(hass, rachio_config_entry_id)
+    except (AttributeError, TypeError, ValueError):
+        return None
+    count = len(linked_entities.zone_entities) or len(linked_entities.zone_switches)
+    return count or None
+
+
 def _log_moisture_mapping_submission(
     schedule_entity_id: str,
     schedule_label: str,
@@ -118,6 +188,8 @@ def _log_moisture_mapping_submission(
 def _flow_schema(
     rachio_options: list[tuple[str, str]],
     defaults: dict[str, Any] | None = None,
+    moisture_sensor_defaults: list[str] | None = None,
+    zone_count_default: int | None = None,
 ) -> vol.Schema:
     """Build the shared config form schema.
 
@@ -131,10 +203,13 @@ def _flow_schema(
     if selected_rachio_entry_id not in available_rachio_entry_ids and rachio_options:
         selected_rachio_entry_id = rachio_options[0][0]
 
-    moisture_defaults = defaults.get(
-        CONF_MOISTURE_SENSOR_ENTITIES,
-        DEFAULT_MOISTURE_SENSOR_ENTITIES,
-    )
+    moisture_defaults = defaults.get(CONF_MOISTURE_SENSOR_ENTITIES)
+    if moisture_defaults is None:
+        moisture_defaults = (
+            moisture_sensor_defaults
+            if moisture_sensor_defaults is not None
+            else DEFAULT_MOISTURE_SENSOR_ENTITIES
+        )
     if not isinstance(moisture_defaults, list):
         moisture_defaults = list(moisture_defaults or [])
 
@@ -159,7 +234,10 @@ def _flow_schema(
         ),
         vol.Required(
             CONF_ZONE_COUNT,
-            default=defaults.get(CONF_ZONE_COUNT, DEFAULT_ZONE_COUNT),
+            default=defaults.get(
+                CONF_ZONE_COUNT,
+                zone_count_default or DEFAULT_ZONE_COUNT,
+            ),
         ): selector.NumberSelector(
             selector.NumberSelectorConfig(min=1, max=32, step=1, mode=selector.NumberSelectorMode.BOX)
         ),
@@ -336,7 +414,14 @@ class RachioSupervisorConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
 
         return self.async_show_form(
             step_id="user",
-            data_schema=_flow_schema(options),
+            data_schema=_flow_schema(
+                options,
+                moisture_sensor_defaults=discover_moisture_sensor_entities(self.hass),
+                zone_count_default=discover_zone_count(
+                    self.hass,
+                    options[0][0] if options else None,
+                ),
+            ),
         )
 
     async def async_step_policy(self, user_input: dict[str, Any] | None = None):
@@ -507,7 +592,15 @@ class RachioSupervisorOptionsFlow(config_entries.OptionsFlow):
             return self.async_abort(reason="no_rachio_entries")
         return self.async_show_form(
             step_id="init",
-            data_schema=_flow_schema(options, defaults),
+            data_schema=_flow_schema(
+                options,
+                defaults,
+                moisture_sensor_defaults=discover_moisture_sensor_entities(self.hass),
+                zone_count_default=discover_zone_count(
+                    self.hass,
+                    defaults.get(CONF_RACHIO_CONFIG_ENTRY_ID),
+                ),
+            ),
         )
 
     async def async_step_policy(self, user_input: dict[str, Any] | None = None):

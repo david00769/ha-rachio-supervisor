@@ -7,6 +7,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 import re
 import urllib.parse
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from homeassistant.config_entries import ConfigEntry, ConfigEntryState
 from homeassistant.const import CONF_API_KEY
@@ -57,6 +58,16 @@ DEGRADED_FAST_WINDOW_HOURS = 2
 AUTO_MOISTURE_WRITE_COOLDOWN_HOURS = 24
 ZONE_PLACEHOLDER_PATH = "/rachio_supervisor/zone-placeholder.svg"
 WORD_RE = re.compile(r"[a-z0-9]+")
+MOISTURE_FRESH_HOURS = 6
+MOISTURE_RECENT_HOURS = 30
+MOISTURE_STALE_HOURS = 72
+MOISTURE_COMPANION_SUFFIXES = (
+    "soil_sampling",
+    "battery",
+    "linkquality",
+    "soil_calibration",
+    "soil_warning",
+)
 
 RAIN_MM_RE = re.compile(r"observed ([0-9.]+) mm(?: and predicted ([0-9.]+) mm)?")
 THRESHOLD_MM_RE = re.compile(r"threshold of ([0-9.]+) mm")
@@ -81,6 +92,17 @@ WEATHER_PROBE_HINT_WORDS = (
     "pws",
     "rain",
     "precip",
+    "temp",
+    "humidity",
+)
+RAIN_SOURCE_DOMAINS = {"sensor", "weather"}
+INVALID_RAIN_CANDIDATE_STATUSES = {"missing", "non_numeric"}
+SUPERVISOR_RAIN_DIAGNOSTIC_SUFFIXES = (
+    "actual_rain_24h",
+    "observed_rain_24h",
+    "rain_actuals_source",
+    "catch_up_evidence",
+    "last_catch_up_decision",
 )
 RAIN_TOTAL_ATTRIBUTE_ALIASES = {
     "rain24h": ("rain_24h", "24h", "high"),
@@ -121,6 +143,35 @@ class RainActualsResolution:
     confidence: str
 
 
+@dataclass(frozen=True, slots=True)
+class MoistureEvidenceSnapshot:
+    """Resolved dated evidence from one mapped Home Assistant moisture sensor."""
+
+    source_entity_id: str | None
+    observed_value: str | None
+    observed_at: str | None
+    source_state: str | None
+    source_last_updated: str | None
+    source_age_label: str
+    sampling_interval_seconds: int | None
+    freshness: str
+    confidence: str
+    age_label: str
+    quality_flags: tuple[str, ...]
+    quality_note: str | None
+    boundary_suspicious: bool = False
+
+
+@dataclass(slots=True)
+class MoistureEvidenceCacheEntry:
+    """Runtime cache for the last useful numeric moisture observation."""
+
+    observed_value: str
+    observed_at: str
+    boundary_value: str | None = None
+    boundary_count: int = 0
+
+
 @dataclass(slots=True)
 class ScheduleSnapshot:
     """Schedule-level status snapshot."""
@@ -159,6 +210,19 @@ class ScheduleSnapshot:
     rachio_image_available: bool = False
     photo_import_status: str = "disabled"
     photo_import_reason: str | None = None
+    moisture_observed_value: str | None = None
+    moisture_observed_at: str | None = None
+    moisture_age_label: str = "unknown"
+    moisture_freshness: str = "expired"
+    moisture_confidence: str = "none"
+    moisture_quality_note: str | None = None
+    moisture_quality_flags: tuple[str, ...] = ()
+    moisture_source_state: str | None = None
+    moisture_source_last_updated: str | None = None
+    moisture_source_age_label: str = "unknown"
+    moisture_sampling_interval_seconds: int | None = None
+    next_run_at: str | None = None
+    watering_days: tuple[str, ...] = ()
 
 
 @dataclass(slots=True)
@@ -183,6 +247,7 @@ class RachioEvidenceSnapshot:
     flow_alert_snapshots: tuple["FlowAlertSnapshot", ...]
     schedule_snapshots: tuple[ScheduleSnapshot, ...]
     weather_source_probe: dict[str, object] | None = None
+    weather_outlook: dict[str, object] | None = None
 
 
 @dataclass(slots=True)
@@ -265,6 +330,8 @@ class SupervisorSnapshot:
     catch_up_runtime_minutes: int
     catch_up_summary: str
     catch_up_decision_at: str | None
+    catch_up_evidence_label: str
+    catch_up_action_label: str
     last_catch_up_decision: str
     active_flow_alert_count: int
     flow_alert_queue: str
@@ -280,6 +347,7 @@ class SupervisorSnapshot:
     zone_overview_items: tuple[dict[str, object], ...]
     rain_source_candidates: tuple[dict[str, object], ...]
     rachio_weather_probe: dict[str, object] | None
+    weather_outlook: dict[str, object] | None
     discovered_entities: dict[str, object]
     schedule_snapshots: tuple[ScheduleSnapshot, ...]
 
@@ -654,6 +722,86 @@ def match_zone_entity(
     return best[2]
 
 
+def _controller_enabled_zone_map(
+    controller: dict[str, object],
+) -> dict[str, dict[str, object]]:
+    """Return enabled controller zones keyed by Rachio zone id."""
+    zones: dict[str, dict[str, object]] = {}
+    for zone in controller.get("zones", []):
+        if not isinstance(zone, dict):
+            continue
+        if not zone.get("enabled", True):
+            continue
+        zone_id = str(zone.get("id", ""))
+        if zone_id:
+            zones[zone_id] = zone
+    return zones
+
+
+def _extract_rule_zone_ids(value: object) -> tuple[str, ...]:
+    """Return Rachio zone ids referenced by a schedule rule payload."""
+    zone_ids: list[str] = []
+
+    def _collect(item: object, key_hint: str = "") -> None:
+        if isinstance(item, dict):
+            for key, nested in item.items():
+                normalized = key.replace("_", "").lower()
+                if normalized in {"zoneid", "zoneuuid"} and nested:
+                    zone_ids.append(str(nested))
+                    continue
+                if "zone" in normalized:
+                    _collect(nested, normalized)
+            return
+        if isinstance(item, (list, tuple, set)):
+            for nested in item:
+                _collect(nested, key_hint)
+            return
+        if key_hint and isinstance(item, str):
+            zone_ids.append(item)
+
+    _collect(value)
+    deduped: list[str] = []
+    for zone_id in zone_ids:
+        if zone_id and zone_id not in deduped:
+            deduped.append(zone_id)
+    return tuple(deduped)
+
+
+def match_controller_zone_from_rule(
+    rule: dict[str, object],
+    controller: dict[str, object],
+) -> str | None:
+    """Resolve a schedule rule to its Rachio controller zone id when unambiguous."""
+    enabled_zones = _controller_enabled_zone_map(controller)
+    matched_zone_ids = [
+        zone_id for zone_id in _extract_rule_zone_ids(rule) if zone_id in enabled_zones
+    ]
+    if len(matched_zone_ids) == 1:
+        return matched_zone_ids[0]
+    return None
+
+
+def match_zone_entity_by_controller_zone(
+    controller_zone_id: str | None,
+    controller: dict[str, object],
+    linked_entities: LinkedRachioEntities,
+) -> ZoneEntityRef | None:
+    """Match a Rachio controller zone id to its HA zone switch."""
+    if not controller_zone_id:
+        return None
+    needle = controller_zone_id.lower()
+    for entity in linked_entities.zone_entities:
+        unique_id = (entity.unique_id or "").lower()
+        if needle and needle in unique_id:
+            return entity
+
+    zone = _controller_enabled_zone_map(controller).get(controller_zone_id)
+    zone_name = str(zone.get("name", "")) if zone else ""
+    if zone_name:
+        return match_zone_entity(zone_name, linked_entities)
+    return None
+
+
 def match_controller_zone(
     schedule_name: str,
     controller: dict[str, object],
@@ -707,6 +855,287 @@ def resolve_moisture_entity(
     else:
         band = "target"
     return mapped_entity_id, f"{numeric:g}", band, last_updated
+
+
+def _format_moisture_age(current: datetime, observed_at: str | None) -> str:
+    """Return a compact age label for one moisture observation timestamp."""
+    if not observed_at:
+        return "unknown"
+    try:
+        observed_dt = datetime.fromisoformat(observed_at)
+    except ValueError:
+        return "unknown"
+    if current.tzinfo is None and observed_dt.tzinfo is not None:
+        current = current.replace(tzinfo=observed_dt.tzinfo)
+    elif current.tzinfo is not None and observed_dt.tzinfo is None:
+        observed_dt = observed_dt.replace(tzinfo=current.tzinfo)
+    age = max(timedelta(0), current - observed_dt)
+    minutes = int(age.total_seconds() // 60)
+    if minutes < 60:
+        return f"{max(1, minutes)}m"
+    hours = int(age.total_seconds() // 3600)
+    if hours < 48:
+        return f"{hours}h"
+    days = int(age.total_seconds() // 86400)
+    return f"{max(1, days)}d"
+
+
+def _moisture_freshness(current: datetime, observed_at: str | None) -> str:
+    """Classify moisture observation age into the public freshness bands."""
+    if not observed_at:
+        return "expired"
+    try:
+        observed_dt = datetime.fromisoformat(observed_at)
+    except ValueError:
+        return "expired"
+    if current.tzinfo is None and observed_dt.tzinfo is not None:
+        current = current.replace(tzinfo=observed_dt.tzinfo)
+    elif current.tzinfo is not None and observed_dt.tzinfo is None:
+        observed_dt = observed_dt.replace(tzinfo=current.tzinfo)
+    age = current - observed_dt
+    if age <= timedelta(hours=MOISTURE_FRESH_HOURS):
+        return "fresh"
+    if age <= timedelta(hours=MOISTURE_RECENT_HOURS):
+        return "recent"
+    if age <= timedelta(hours=MOISTURE_STALE_HOURS):
+        return "stale"
+    return "expired"
+
+
+def _moisture_band(value: str | None) -> str:
+    """Return dry/target/wet for a resolved numeric moisture value."""
+    if value is None:
+        return "missing"
+    try:
+        numeric = float(value)
+    except (TypeError, ValueError):
+        return "non_numeric"
+    if numeric < DRY_THRESHOLD:
+        return "dry"
+    if numeric > WET_THRESHOLD:
+        return "wet"
+    return "target"
+
+
+def _moisture_object_base(entity_id: str) -> str:
+    """Return a best-effort object-id base for CS-201Z-style companions."""
+    object_id = entity_id.split(".", 1)[-1]
+    for suffix in (
+        "_soil_moisture",
+        "_moisture",
+        "_humidity",
+        "_temperature",
+    ):
+        if object_id.endswith(suffix):
+            return object_id[: -len(suffix)]
+    return object_id
+
+
+def _find_companion_state(
+    hass: HomeAssistant,
+    base: str,
+    suffix: str,
+) -> object | None:
+    """Find one likely companion entity by exact id or suffix match."""
+    for domain in ("sensor", "number", "select", "binary_sensor"):
+        state = hass.states.get(f"{domain}.{base}_{suffix}")
+        if state is not None:
+            return state
+    needle = f"{base}_{suffix}"
+    for state in _iter_hass_states(hass):
+        entity_id = str(getattr(state, "entity_id", "") or "")
+        if entity_id.endswith(needle):
+            return state
+    return None
+
+
+def _moisture_companion_info(
+    hass: HomeAssistant,
+    entity_id: str | None,
+    attributes: dict[str, object],
+) -> tuple[int | None, tuple[str, ...]]:
+    """Return detected sampling interval and available companion suffixes."""
+    if not entity_id:
+        return None, ()
+    base = _moisture_object_base(entity_id)
+    companions: list[str] = []
+    sampling_interval = _coerce_float(
+        attributes.get("soil_sampling")
+        or attributes.get("sampling_interval")
+        or attributes.get("sampling_interval_seconds")
+    )
+    for suffix in MOISTURE_COMPANION_SUFFIXES:
+        companion = _find_companion_state(hass, base, suffix)
+        if companion is None:
+            continue
+        companions.append(suffix)
+        if suffix == "soil_sampling" and sampling_interval is None:
+            sampling_interval = _coerce_float(getattr(companion, "state", None))
+    if sampling_interval is None:
+        return None, tuple(companions)
+    return int(sampling_interval), tuple(companions)
+
+
+def _moisture_quality_note(flags: tuple[str, ...]) -> str | None:
+    """Return the most important public quality note for one evidence item."""
+    for flag in (
+        "missing_sensor",
+        "expired_sample",
+        "stale_sample",
+        "boundary_value_needs_calibration",
+        "sensor_sleeping_or_offline",
+        "non_numeric_state",
+    ):
+        if flag in flags:
+            return flag
+    return None
+
+
+def _moisture_confidence(
+    *,
+    freshness: str,
+    boundary_suspicious: bool,
+    used_cache: bool,
+    companion_names: tuple[str, ...],
+    flags: tuple[str, ...],
+) -> str:
+    """Return the public confidence class for one moisture evidence item."""
+    if freshness == "expired" or "missing_sensor" in flags:
+        return "none"
+    if freshness == "stale" or boundary_suspicious:
+        return "low"
+    if not companion_names:
+        return "low"
+    if used_cache or freshness == "recent":
+        return "medium"
+    return "high"
+
+
+def resolve_moisture_evidence(
+    hass: HomeAssistant,
+    mapped_entity_id: str | None,
+    *,
+    cache: dict[str, MoistureEvidenceCacheEntry] | None = None,
+    current: datetime | None = None,
+) -> MoistureEvidenceSnapshot:
+    """Resolve one mapped moisture sensor into dated, cached evidence."""
+    current = current or dt_util.now()
+    cache = cache if cache is not None else {}
+    if not mapped_entity_id:
+        return MoistureEvidenceSnapshot(
+            source_entity_id=None,
+            observed_value=None,
+            observed_at=None,
+            source_state=None,
+            source_last_updated=None,
+            source_age_label="unknown",
+            sampling_interval_seconds=None,
+            freshness="expired",
+            confidence="none",
+            age_label="unknown",
+            quality_flags=(),
+            quality_note=None,
+        )
+
+    state = hass.states.get(mapped_entity_id)
+    cache_entry = cache.get(mapped_entity_id)
+    flags: list[str] = []
+    used_cache = False
+    boundary_suspicious = False
+    source_state: str | None = None
+    source_last_updated: str | None = None
+    attributes: dict[str, object] = {}
+
+    if state is None:
+        flags.append("missing_sensor")
+        observed_value = cache_entry.observed_value if cache_entry else None
+        observed_at = cache_entry.observed_at if cache_entry else None
+        used_cache = bool(cache_entry)
+    else:
+        source_state = str(getattr(state, "state", ""))
+        attributes = dict(getattr(state, "attributes", {}) or {})
+        state_last_updated = getattr(state, "last_updated", None)
+        source_last_updated = (
+            state_last_updated.isoformat() if state_last_updated else current.isoformat()
+        )
+        numeric = None
+        if source_state not in {STATE_UNAVAILABLE, STATE_UNKNOWN}:
+            numeric = _coerce_float(source_state)
+        if numeric is not None:
+            observed_value = f"{numeric:g}"
+            observed_at = source_last_updated
+            boundary_value = observed_value if numeric in {0.0, 100.0} else None
+            if boundary_value:
+                if (
+                    cache_entry
+                    and cache_entry.boundary_value == boundary_value
+                    and cache_entry.boundary_count > 0
+                ):
+                    boundary_count = cache_entry.boundary_count + 1
+                else:
+                    boundary_count = 1
+                boundary_suspicious = boundary_count >= 2
+                cache[mapped_entity_id] = MoistureEvidenceCacheEntry(
+                    observed_value=observed_value,
+                    observed_at=observed_at,
+                    boundary_value=boundary_value,
+                    boundary_count=boundary_count,
+                )
+            else:
+                cache[mapped_entity_id] = MoistureEvidenceCacheEntry(
+                    observed_value=observed_value,
+                    observed_at=observed_at,
+                )
+        else:
+            if source_state in {STATE_UNAVAILABLE, STATE_UNKNOWN}:
+                flags.append("sensor_sleeping_or_offline")
+            else:
+                flags.append("non_numeric_state")
+            observed_value = cache_entry.observed_value if cache_entry else None
+            observed_at = cache_entry.observed_at if cache_entry else None
+            used_cache = bool(cache_entry)
+            boundary_suspicious = bool(
+                cache_entry
+                and cache_entry.boundary_value in {"0", "100"}
+                and cache_entry.boundary_count >= 2
+            )
+
+    sampling_interval, companion_names = _moisture_companion_info(
+        hass,
+        mapped_entity_id,
+        attributes,
+    )
+    freshness = _moisture_freshness(current, observed_at)
+    if freshness == "stale":
+        flags.append("stale_sample")
+    elif freshness == "expired":
+        flags.append("expired_sample")
+    if boundary_suspicious:
+        flags.append("boundary_value_needs_calibration")
+    if not companion_names:
+        flags.append("missing_companion_health_data")
+    quality_flags = tuple(dict.fromkeys(flags))
+    return MoistureEvidenceSnapshot(
+        source_entity_id=mapped_entity_id,
+        observed_value=observed_value,
+        observed_at=observed_at,
+        source_state=source_state or "missing",
+        source_last_updated=source_last_updated,
+        source_age_label=_format_moisture_age(current, source_last_updated),
+        sampling_interval_seconds=sampling_interval,
+        freshness=freshness,
+        confidence=_moisture_confidence(
+            freshness=freshness,
+            boundary_suspicious=boundary_suspicious,
+            used_cache=used_cache,
+            companion_names=companion_names,
+            flags=quality_flags,
+        ),
+        age_label=_format_moisture_age(current, observed_at),
+        quality_flags=quality_flags,
+        quality_note=_moisture_quality_note(quality_flags),
+        boundary_suspicious=boundary_suspicious,
+    )
 
 
 def _coerce_float(value: object) -> float | None:
@@ -774,6 +1203,18 @@ def _has_rain_rate_only(attributes: dict[str, object]) -> bool:
     """Return true when a source reports rate but not a usable total."""
     normalised = {_normalise_key(str(key)) for key in attributes}
     return bool(normalised & RAIN_RATE_ATTRIBUTE_ALIASES)
+
+
+def _is_supervisor_rain_diagnostic_entity(
+    entity_id: str,
+    attributes: dict[str, object],
+) -> bool:
+    """Return whether a rain-looking entity is one of this integration's outputs."""
+    object_id = entity_id.split(".", 1)[-1].lower()
+    friendly_name = str(attributes.get("friendly_name", "")).lower()
+    if not any(object_id.endswith(suffix) for suffix in SUPERVISOR_RAIN_DIAGNOSTIC_SUFFIXES):
+        return False
+    return "rachio" in object_id or "rachio" in friendly_name
 
 
 def resolve_rain_actuals_entity(
@@ -896,7 +1337,15 @@ def discover_rain_source_candidates(
         entity_id = str(getattr(state, "entity_id", "") or "")
         if not entity_id:
             continue
+        domain = entity_id.split(".", 1)[0]
+        if domain not in RAIN_SOURCE_DOMAINS:
+            continue
         attributes = dict(getattr(state, "attributes", {}) or {})
+        if (
+            entity_id != selected_entity_id
+            and _is_supervisor_rain_diagnostic_entity(entity_id, attributes)
+        ):
+            continue
         friendly_name = str(attributes.get("friendly_name", ""))
         haystack = f"{entity_id} {friendly_name}".lower()
         has_rain_name = any(word in haystack for word in RAIN_HINT_WORDS)
@@ -914,6 +1363,11 @@ def discover_rain_source_candidates(
         if not (has_rain_name or has_precip_device_class or has_rain_unit or has_total_attr):
             continue
         resolution = resolve_rain_actuals_entity(hass, entity_id)
+        if (
+            entity_id != selected_entity_id
+            and resolution.status in INVALID_RAIN_CANDIDATE_STATUSES
+        ):
+            continue
         score = 0
         if entity_id == selected_entity_id:
             score += 100
@@ -957,10 +1411,13 @@ def apply_moisture_mapping(
     auto_moisture_write_schedule_entities: set[str] | None = None,
     last_write_status_by_rule: dict[str, str] | None = None,
     write_back_mode_enabled: bool = True,
+    moisture_evidence_cache: dict[str, MoistureEvidenceCacheEntry] | None = None,
+    current: datetime | None = None,
 ) -> tuple[ScheduleSnapshot, ...]:
     """Attach moisture mapping and banding to schedule snapshots."""
     auto_moisture_write_schedule_entities = auto_moisture_write_schedule_entities or set()
     last_write_status_by_rule = last_write_status_by_rule or {}
+    current = current or dt_util.now()
     hydrated: list[ScheduleSnapshot] = []
     for schedule in schedules:
         mapped_entity_id = (
@@ -968,32 +1425,62 @@ def apply_moisture_mapping(
             if schedule.schedule_entity_id
             else None
         )
-        (
-            moisture_entity_id,
-            moisture_value,
-            moisture_band,
-            moisture_last_updated,
-        ) = resolve_moisture_entity(
+        evidence = resolve_moisture_evidence(
             hass,
             mapped_entity_id,
+            cache=moisture_evidence_cache,
+            current=current,
+        )
+        moisture_entity_id = evidence.source_entity_id
+        moisture_value = evidence.observed_value
+        moisture_band = (
+            "unmapped" if moisture_entity_id is None else _moisture_band(moisture_value)
+        )
+        moisture_last_updated = evidence.observed_at
+        actionable_freshness = evidence.freshness in {"fresh", "recent"}
+        write_allowed = bool(
+            moisture_value is not None
+            and actionable_freshness
+            and "missing_sensor" not in evidence.quality_flags
+            and "expired_sample" not in evidence.quality_flags
+            and "stale_sample" not in evidence.quality_flags
+        )
+        recommended_write_allowed = bool(
+            write_allowed and "boundary_value_needs_calibration" not in evidence.quality_flags
         )
         if moisture_entity_id is None:
             moisture_status = "No explicit moisture sensor is mapped for this schedule."
-        elif moisture_band in {"unavailable", "non_numeric", "missing"}:
+        elif evidence.quality_note == "sensor_sleeping_or_offline" and write_allowed:
             moisture_status = (
-                "Mapped moisture sensor is not reporting a usable numeric value."
+                "Mapped moisture sensor is offline, using the last valid dated observation."
+            )
+        elif evidence.quality_note == "non_numeric_state" and write_allowed:
+            moisture_status = (
+                "Mapped moisture sensor is nonnumeric, using the last valid dated observation."
+            )
+        elif evidence.quality_note == "stale_sample":
+            moisture_status = "Mapped moisture sensor has stale dated evidence."
+        elif evidence.quality_note == "expired_sample":
+            moisture_status = "Mapped moisture sensor evidence has expired."
+        elif evidence.quality_note == "missing_sensor":
+            moisture_status = "Mapped moisture sensor is missing."
+        elif evidence.quality_note == "boundary_value_needs_calibration":
+            moisture_status = (
+                "Mapped moisture sensor is repeatedly reporting a boundary value; calibration is needed."
             )
         else:
-            moisture_status = "Mapped moisture sensor resolved explicitly."
+            moisture_status = "Mapped moisture sensor resolved as dated evidence."
         if schedule.moisture_write_back_ready != "ready":
             recommended_action = "resolve_write_back"
         elif moisture_entity_id is None:
             recommended_action = "map_moisture_sensor"
-        elif moisture_band in {"unavailable", "non_numeric", "missing"}:
+        elif evidence.quality_note == "missing_sensor":
             recommended_action = "repair_moisture_sensor"
+        elif evidence.quality_note == "boundary_value_needs_calibration":
+            recommended_action = "calibrate_moisture_sensor"
         elif schedule.policy_mode == "auto_catch_up_enabled" and schedule.catch_up_candidate == "eligible_auto":
             recommended_action = "review_auto_catch_up"
-        elif moisture_band == "dry":
+        elif moisture_band == "dry" and recommended_write_allowed:
             recommended_action = "write_moisture_now"
         else:
             recommended_action = "none"
@@ -1014,15 +1501,15 @@ def apply_moisture_mapping(
             elif (
                 recommended_action == "write_moisture_now"
                 and schedule.moisture_write_back_ready == "ready"
+                and evidence.freshness == "fresh"
+                and "boundary_value_needs_calibration" not in evidence.quality_flags
             ):
                 auto_write_status = "eligible"
             elif recommended_action == "write_moisture_now":
                 auto_write_status = "blocked"
             else:
                 auto_write_status = "watching"
-        write_value = (
-            moisture_value if moisture_band in {"dry", "target", "wet"} else None
-        )
+        write_value = moisture_value if write_allowed else None
         if write_value and schedule.moisture_write_back_ready == "ready":
             write_summary = f"Sensor {write_value}% -> Rachio zone moisture"
         elif write_value:
@@ -1065,6 +1552,19 @@ def apply_moisture_mapping(
                 rachio_image_available=schedule.rachio_image_available,
                 photo_import_status=schedule.photo_import_status,
                 photo_import_reason=schedule.photo_import_reason,
+                moisture_observed_value=evidence.observed_value,
+                moisture_observed_at=evidence.observed_at,
+                moisture_age_label=evidence.age_label,
+                moisture_freshness=evidence.freshness,
+                moisture_confidence=evidence.confidence,
+                moisture_quality_note=evidence.quality_note,
+                moisture_quality_flags=evidence.quality_flags,
+                moisture_source_state=evidence.source_state,
+                moisture_source_last_updated=evidence.source_last_updated,
+                moisture_source_age_label=evidence.source_age_label,
+                moisture_sampling_interval_seconds=evidence.sampling_interval_seconds,
+                next_run_at=schedule.next_run_at,
+                watering_days=schedule.watering_days,
             )
         )
     return tuple(hydrated)
@@ -1115,7 +1615,8 @@ def moisture_action_label(action: str) -> str:
         "write_moisture_now": "Write ready",
         "resolve_write_back": "Resolve Rachio zone",
         "map_moisture_sensor": "Map sensor",
-        "repair_moisture_sensor": "Repair sensor",
+        "repair_moisture_sensor": "Sensor offline",
+        "calibrate_moisture_sensor": "Calibrate sensor",
         "review_auto_catch_up": "Review catch-up",
         "none": "No write needed",
         "pending_moisture_eval": "Awaiting evaluation",
@@ -1133,6 +1634,32 @@ def moisture_data_quality(moisture_band: str) -> str:
     return "unknown"
 
 
+def moisture_review_posture(schedule: ScheduleSnapshot) -> tuple[str, int]:
+    """Return moisture review copy and sort rank for one schedule."""
+    flags = set(schedule.moisture_quality_flags)
+    if "missing_sensor" in flags:
+        return "Sensor offline", 3
+    if "boundary_value_needs_calibration" in flags:
+        return "Calibrate sensor", 1
+    if schedule.moisture_freshness == "stale":
+        return "Stale - no write", 3
+    if schedule.moisture_freshness == "expired":
+        return "Sensor offline", 3
+    if schedule.recommended_action == "write_moisture_now":
+        if schedule.moisture_freshness == "recent":
+            return "Recent sample - confirm before write", 0
+        return "Write ready", 0
+    if schedule.moisture_write_back_ready == "ready" and schedule.moisture_band == "dry":
+        return "Dry - review", 1
+    if schedule.moisture_band == "wet":
+        return "Wet / no write", 2
+    if schedule.moisture_band == "target":
+        return "Moisture watch", 2
+    if schedule.moisture_band == "dry":
+        return "Dry / review", 1
+    return "Unmapped", 4
+
+
 def build_moisture_review_items(
     schedules: tuple[ScheduleSnapshot, ...],
 ) -> tuple[dict[str, object], ...]:
@@ -1141,30 +1668,10 @@ def build_moisture_review_items(
     for schedule in schedules:
         if schedule.moisture_entity_id is None and schedule.moisture_band == "unmapped":
             continue
-        if schedule.recommended_action == "write_moisture_now":
-            posture_note = "Write-back recommended"
-            rank = 0
-        elif schedule.moisture_write_back_ready == "ready" and schedule.moisture_band == "dry":
-            posture_note = "Write-back ready"
-            rank = 1
-        elif schedule.moisture_band in {"missing", "unavailable", "non_numeric"}:
-            posture_note = "Sensor repair needed"
-            rank = 3
-        elif schedule.moisture_band == "wet":
-            posture_note = "Wet / no write"
-            rank = 2
-        elif schedule.moisture_band == "target":
-            posture_note = "Moisture watch"
-            rank = 2
-        elif schedule.moisture_band == "dry":
-            posture_note = "Dry / review"
-            rank = 1
-        else:
-            posture_note = "Unmapped"
-            rank = 4
+        posture_note, rank = moisture_review_posture(schedule)
         write_value = schedule.write_value
         if write_value is None and schedule.moisture_band in {"dry", "target", "wet"}:
-            write_value = schedule.moisture_value
+            write_value = schedule.moisture_observed_value or schedule.moisture_value
         write_summary = schedule.write_summary
         if (
             write_summary == "No moisture write target."
@@ -1186,6 +1693,17 @@ def build_moisture_review_items(
                 "moisture_write_back_ready": schedule.moisture_write_back_ready,
                 "moisture_value": schedule.moisture_value,
                 "sensor_value": schedule.moisture_value,
+                "moisture_observed_value": schedule.moisture_observed_value,
+                "moisture_observed_at": schedule.moisture_observed_at,
+                "moisture_age_label": schedule.moisture_age_label,
+                "moisture_freshness": schedule.moisture_freshness,
+                "moisture_confidence": schedule.moisture_confidence,
+                "moisture_quality_note": schedule.moisture_quality_note,
+                "moisture_quality_flags": list(schedule.moisture_quality_flags),
+                "moisture_source_state": schedule.moisture_source_state,
+                "moisture_source_last_updated": schedule.moisture_source_last_updated,
+                "moisture_source_age_label": schedule.moisture_source_age_label,
+                "moisture_sampling_interval_seconds": schedule.moisture_sampling_interval_seconds,
                 "rachio_moisture_value": schedule.rachio_moisture_value or "not_reported",
                 "write_value": write_value,
                 "write_target_label": "Rachio zone moisture",
@@ -1193,6 +1711,7 @@ def build_moisture_review_items(
                 "can_write": bool(
                     schedule.moisture_write_back_ready == "ready"
                     and write_value is not None
+                    and schedule.moisture_freshness in {"fresh", "recent"}
                 ),
                 "auto_moisture_write_enabled": schedule.auto_moisture_write_enabled,
                 "auto_moisture_write_status": schedule.auto_moisture_write_status,
@@ -1273,6 +1792,171 @@ def _watering_days(value: object | None) -> list[str]:
         if chip and chip not in chips:
             chips.append(chip)
     return chips
+
+
+RACHIO_DAY_CHIPS = {
+    1: "M",
+    2: "T",
+    3: "W",
+    4: "Th",
+    5: "F",
+    6: "Sa",
+    7: "Su",
+}
+
+
+def _schedule_job_types(rule: dict[str, object]) -> tuple[str, ...]:
+    """Return normalized Rachio schedule job type tokens."""
+    value = rule.get("scheduleJobTypes")
+    if isinstance(value, (list, tuple, set)):
+        return tuple(str(item).upper() for item in value)
+    if value:
+        return (str(value).upper(),)
+    return ()
+
+
+def schedule_rule_watering_days(rule: dict[str, object]) -> tuple[str, ...]:
+    """Return compact day chips from Rachio schedule rule metadata."""
+    days: list[int] = []
+    for job_type in _schedule_job_types(rule):
+        match = re.fullmatch(r"DAY_OF_WEEK_([1-7])", job_type)
+        if match:
+            day = int(match.group(1))
+            if day not in days:
+                days.append(day)
+    return tuple(RACHIO_DAY_CHIPS[day] for day in sorted(days))
+
+
+def _rule_start_time(rule: dict[str, object]) -> tuple[int, int] | None:
+    """Return the rule start hour/minute when the API exposes one."""
+    try:
+        hour = int(rule.get("startHour", 0))
+        minute = int(rule.get("startMinute", 0))
+    except (TypeError, ValueError):
+        return None
+    if not 0 <= hour <= 23 or not 0 <= minute <= 59:
+        return None
+    return hour, minute
+
+
+def _controller_timezone(controller: dict[str, object]):
+    """Return the controller timezone, falling back to Home Assistant local time."""
+    timezone_name = str(controller.get("timeZone") or "")
+    if timezone_name:
+        try:
+            return ZoneInfo(timezone_name)
+        except ZoneInfoNotFoundError:
+            return None
+    return None
+
+
+def _localize_current(
+    current: datetime,
+    tzinfo,
+) -> datetime:
+    """Return current time in the controller timezone."""
+    if tzinfo is None:
+        return current
+    if current.tzinfo is None:
+        return current.replace(tzinfo=tzinfo)
+    return current.astimezone(tzinfo)
+
+
+def _rule_start_datetime(
+    rule: dict[str, object],
+    controller: dict[str, object],
+    tzinfo,
+) -> datetime | None:
+    """Return the local start datetime for interval schedules."""
+    start_time = _rule_start_time(rule)
+    if start_time is None:
+        return None
+    hour, minute = start_time
+    start_date = rule.get("startDate")
+    try:
+        if start_date is not None:
+            start = datetime.fromtimestamp(int(start_date) / 1000, tz=tzinfo or timezone.utc)
+            if tzinfo is not None:
+                start = start.astimezone(tzinfo)
+            return start.replace(hour=hour, minute=minute, second=0, microsecond=0)
+    except (TypeError, ValueError, OSError):
+        pass
+
+    try:
+        year = int(rule.get("startYear", dt_util.now().year))
+        month = int(rule.get("startMonth", 1))
+        day = int(rule.get("startDay", 1))
+        return datetime(
+            year,
+            month,
+            day,
+            hour,
+            minute,
+            tzinfo=tzinfo,
+        )
+    except (TypeError, ValueError):
+        return None
+
+
+def schedule_rule_next_run(
+    rule: dict[str, object],
+    controller: dict[str, object],
+    *,
+    current: datetime | None = None,
+) -> str | None:
+    """Return the next run timestamp from Rachio rule metadata when possible."""
+    start_time = _rule_start_time(rule)
+    if start_time is None:
+        summary = str(rule.get("summary", "")).strip()
+        return summary or None
+
+    tzinfo = _controller_timezone(controller)
+    now = _localize_current(current or dt_util.now(), tzinfo)
+    hour, minute = start_time
+    weekdays: list[int] = []
+    interval_days: int | None = None
+    for job_type in _schedule_job_types(rule):
+        day_match = re.fullmatch(r"DAY_OF_WEEK_([1-7])", job_type)
+        if day_match:
+            weekdays.append(int(day_match.group(1)) - 1)
+            continue
+        interval_match = re.fullmatch(r"INTERVAL_([0-9]+)", job_type)
+        if interval_match:
+            interval_days = max(1, int(interval_match.group(1)))
+
+    if weekdays:
+        candidates = []
+        for weekday in sorted(set(weekdays)):
+            days_ahead = (weekday - now.weekday()) % 7
+            candidate = (now + timedelta(days=days_ahead)).replace(
+                hour=hour,
+                minute=minute,
+                second=0,
+                microsecond=0,
+            )
+            if candidate <= now:
+                candidate += timedelta(days=7)
+            candidates.append(candidate)
+        return min(candidates).isoformat() if candidates else None
+
+    if interval_days is not None:
+        start = _rule_start_datetime(rule, controller, tzinfo)
+        if start is None:
+            candidate = now.replace(hour=hour, minute=minute, second=0, microsecond=0)
+            if candidate <= now:
+                candidate += timedelta(days=interval_days)
+            return candidate.isoformat()
+        candidate = start
+        if candidate <= now:
+            elapsed_days = max(0, (now.date() - candidate.date()).days)
+            intervals_elapsed = elapsed_days // interval_days
+            candidate = candidate + timedelta(days=intervals_elapsed * interval_days)
+            while candidate <= now:
+                candidate += timedelta(days=interval_days)
+        return candidate.isoformat()
+
+    summary = str(rule.get("summary", "")).strip()
+    return summary or None
 
 
 def _rain_skip_state(schedule: ScheduleSnapshot) -> str:
@@ -1369,7 +2053,7 @@ def build_zone_overview_items(
                 "next_start_time",
                 "next_event",
             ),
-        )
+        ) or schedule.next_run_at
         watering_days = _watering_days(
             _state_attr_raw(
                 hass,
@@ -1382,7 +2066,7 @@ def build_zone_overview_items(
                     "day_chips",
                 ),
             )
-        )
+        ) or list(schedule.watering_days)
         plant_note = _state_attr_value(
             hass,
             schedule.schedule_entity_id,
@@ -1452,11 +2136,23 @@ def build_zone_overview_items(
                 "supervisor_icon": supervisor_icon,
                 "moisture_band": schedule.moisture_band,
                 "moisture_value": schedule.moisture_value,
+                "moisture_observed_value": schedule.moisture_observed_value,
+                "moisture_observed_at": schedule.moisture_observed_at,
+                "moisture_age_label": schedule.moisture_age_label,
+                "moisture_freshness": schedule.moisture_freshness,
+                "moisture_confidence": schedule.moisture_confidence,
+                "moisture_quality_note": schedule.moisture_quality_note,
+                "moisture_quality_flags": list(schedule.moisture_quality_flags),
+                "moisture_source_state": schedule.moisture_source_state,
+                "moisture_source_last_updated": schedule.moisture_source_last_updated,
+                "moisture_source_age_label": schedule.moisture_source_age_label,
+                "moisture_sampling_interval_seconds": schedule.moisture_sampling_interval_seconds,
+                "moisture_entity_id": schedule.moisture_entity_id,
                 "flow_alert_state": flow_alert_state,
                 "flow_review_state": flow_alert_state,
                 "policy_mode": schedule.policy_mode,
                 "runtime_minutes": schedule.runtime_minutes,
-                "plant_note": plant_note or "Add plants, soil, emitters, and frequency.",
+                "plant_note": plant_note or "",
                 "detail_note": detail_note or schedule.summary,
             }
         )
@@ -1553,6 +2249,154 @@ def build_rachio_weather_probe(
             "Rachio forecast/source hints are diagnostic only; forecast precipitation is not treated as observed rainfall."
         ),
         "hints": hints[:24],
+    }
+
+
+def _weather_scalar(payload: dict[str, object], aliases: tuple[str, ...]) -> object | None:
+    """Return the first present scalar value from a weather payload."""
+    normalised = {
+        _normalise_key(str(key)): value
+        for key, value in payload.items()
+        if not isinstance(value, (dict, list, tuple))
+    }
+    for alias in aliases:
+        value = normalised.get(_normalise_key(alias))
+        if value not in {None, ""}:
+            return value
+    return None
+
+
+def _format_weather_amount(value: object, suffix: str) -> str | None:
+    """Return a compact weather amount label."""
+    numeric = _coerce_float(value)
+    if numeric is None:
+        return None
+    return f"{numeric:g}{suffix}"
+
+
+def _forecast_record(payload: object, label: str) -> dict[str, object] | None:
+    """Return a compact weather forecast record from one Rachio payload node."""
+    if not isinstance(payload, dict):
+        return None
+    summary = _weather_scalar(
+        payload,
+        ("weatherSummary", "summary", "condition", "weatherType"),
+    )
+    temperature = _weather_scalar(
+        payload,
+        ("temperature", "temp", "currentTemperature", "highTemperature"),
+    )
+    high = _weather_scalar(payload, ("highTemperature", "temperatureHigh", "maxTemp"))
+    low = _weather_scalar(payload, ("lowTemperature", "temperatureLow", "minTemp"))
+    precip = _weather_scalar(
+        payload,
+        ("calculatedPrecip", "precipAccumulation", "precipTotal", "precipitation"),
+    )
+    intensity = _weather_scalar(
+        payload,
+        ("precipIntensity", "precipRate", "precipitationIntensity"),
+    )
+    probability = _weather_scalar(
+        payload,
+        ("precipProbability", "precipitationProbability", "rainProbability"),
+    )
+    station_id = _weather_scalar(payload, ("weatherStationId", "stationId"))
+
+    parts: list[str] = []
+    if summary:
+        parts.append(str(summary))
+    temp_label = _format_weather_amount(temperature, "C")
+    if temp_label:
+        parts.append(temp_label)
+    elif high is not None or low is not None:
+        high_label = _format_weather_amount(high, "C")
+        low_label = _format_weather_amount(low, "C")
+        if high_label and low_label:
+            parts.append(f"{low_label}-{high_label}")
+        elif high_label:
+            parts.append(f"high {high_label}")
+        elif low_label:
+            parts.append(f"low {low_label}")
+    precip_label = _format_weather_amount(precip, " mm")
+    if precip_label:
+        parts.append(precip_label)
+    intensity_label = _format_weather_amount(intensity, " mm/h")
+    if intensity_label:
+        parts.append(intensity_label)
+    probability_label = _format_weather_amount(
+        (float(probability) * 100 if _coerce_float(probability) is not None and float(probability) <= 1 else probability),
+        "%",
+    )
+    if probability_label:
+        parts.append(probability_label)
+
+    if not parts and not station_id:
+        return None
+    return {
+        "label": label,
+        "summary": ", ".join(parts) if parts else "not reported",
+        "weather_summary": str(summary) if summary is not None else None,
+        "temperature_c": _coerce_float(temperature),
+        "high_temperature_c": _coerce_float(high),
+        "low_temperature_c": _coerce_float(low),
+        "precip_mm": _coerce_float(precip),
+        "precip_intensity_mm_per_hour": _coerce_float(intensity),
+        "precip_probability_percent": _coerce_float(probability_label[:-1])
+        if probability_label
+        else None,
+        "weather_station_id": str(station_id) if station_id is not None else None,
+    }
+
+
+def build_rachio_weather_outlook(
+    forecast_payload: dict[str, object] | None,
+) -> dict[str, object]:
+    """Build a read-only weather outlook without treating forecasts as actual rain."""
+    if not forecast_payload:
+        return {
+            "status": "forecast_unavailable",
+            "source": "rachio_public_forecast",
+            "used_for_actual_rain": False,
+            "heat_assist_state": "forecast_unavailable",
+            "summary": "Forecast unavailable; heat assist has no weather outlook.",
+            "action_label": "No heat top-up automation is implemented in v1.",
+            "reason": "Rachio forecast payload was unavailable.",
+            "current": None,
+            "next": None,
+            "forecast": [],
+        }
+
+    current = _forecast_record(forecast_payload.get("current"), "current")
+    forecast_items = []
+    raw_forecast = forecast_payload.get("forecast")
+    if isinstance(raw_forecast, list):
+        for index, item in enumerate(raw_forecast[:2]):
+            record = _forecast_record(item, "today" if index == 0 else "next")
+            if record:
+                forecast_items.append(record)
+    next_record = forecast_items[1] if len(forecast_items) > 1 else (
+        forecast_items[0] if forecast_items else None
+    )
+
+    summary_parts = []
+    if current:
+        summary_parts.append(f"Now: {current['summary']}")
+    if next_record:
+        summary_parts.append(f"Next: {next_record['summary']}")
+    summary = "; ".join(summary_parts) or "Forecast available; no compact weather summary reported."
+    return {
+        "status": "forecast_available",
+        "source": "rachio_public_forecast",
+        "used_for_actual_rain": False,
+        "heat_assist_state": "weather_outlook_only",
+        "summary": summary[:255],
+        "action_label": "No heat top-up automation is implemented in v1.",
+        "reason": (
+            "Rachio forecast is shown for heat/outlook context only; it is not observed rainfall evidence."
+        ),
+        "current": current,
+        "next": next_record,
+        "forecast": forecast_items,
     }
 
 
@@ -1713,6 +2557,116 @@ def evaluate_catch_up_decision(
     return latest_decision
 
 
+def _format_mm(value: float | None) -> str:
+    """Return a compact millimetre label."""
+    if value is None:
+        return "rain amount not reported"
+    return f"{value:g} mm"
+
+
+def _format_evidence_date(value: str | None) -> str:
+    """Return a compact date label from an ISO timestamp."""
+    if not value:
+        return "unknown date"
+    try:
+        return datetime.fromisoformat(value).strftime("%Y-%m-%d")
+    except ValueError:
+        return value[:10]
+
+
+def _decision_schedule(
+    schedules: tuple[ScheduleSnapshot, ...],
+    schedule_name: str | None,
+) -> ScheduleSnapshot | None:
+    """Return the schedule referenced by the current catch-up decision."""
+    if not schedule_name:
+        return None
+    return next((schedule for schedule in schedules if schedule.name == schedule_name), None)
+
+
+def build_catch_up_evidence_label(
+    *,
+    decision: dict[str, object],
+    schedules: tuple[ScheduleSnapshot, ...],
+    observed_rain_best_event: dict[str, object] | None,
+    actual_rain_value: str,
+    actual_rain_unit: str | None,
+    actual_rain_window: str,
+) -> str:
+    """Return dashboard-facing catch-up evidence copy."""
+    schedule = _decision_schedule(
+        schedules,
+        str(decision.get("schedule_name")) if decision.get("schedule_name") else None,
+    )
+    if schedule and schedule.last_skip_at:
+        observed = _format_mm(schedule.observed_mm)
+        threshold = (
+            f"; threshold {_format_mm(schedule.threshold_mm)}"
+            if schedule.threshold_mm is not None
+            else ""
+        )
+        return (
+            f"{schedule.name}: Rachio skip on {_format_evidence_date(schedule.last_skip_at)}; "
+            f"{observed}{threshold}"
+        )[:255]
+    if schedule and schedule.last_run_at:
+        return (
+            f"{schedule.name}: last ran on {_format_evidence_date(schedule.last_run_at)}; "
+            "no catch-up rain evidence"
+        )[:255]
+    if observed_rain_best_event:
+        observed_mm = _coerce_float(observed_rain_best_event.get("observed_mm"))
+        happened_at = (
+            str(observed_rain_best_event.get("happened_at"))
+            if observed_rain_best_event.get("happened_at")
+            else str(observed_rain_best_event.get("latest_skip_happened_at") or "")
+        )
+        if observed_mm is not None:
+            return (
+                f"Latest Rachio rain evidence: {_format_mm(observed_mm)} on "
+                f"{_format_evidence_date(happened_at)}"
+            )[:255]
+        if happened_at:
+            return (
+                f"Latest Rachio skip on {_format_evidence_date(happened_at)}; "
+                "rain amount not reported"
+            )[:255]
+    if actual_rain_value not in {"", "unconfigured", "unavailable", "unknown", "not_reported"}:
+        unit = actual_rain_unit or "mm"
+        return f"Actual rain source: {actual_rain_value} {unit} ({actual_rain_window})"[:255]
+    return "Actual-rain source unconfigured; no recent Rachio rain amount reported."
+
+
+def build_catch_up_action_label(
+    *,
+    status: str,
+    reason: str,
+    schedule_name: str | None,
+    runtime_minutes: int,
+) -> str:
+    """Return dashboard-facing catch-up action copy."""
+    subject = schedule_name or "site"
+    if status == "executed":
+        return f"Ran {runtime_minutes} min catch-up for {subject}."
+    if status == "confirmed":
+        return f"Ready to run {runtime_minutes} min catch-up for {subject}."
+    if status == "deferred":
+        if reason == "review_recommended":
+            return f"Review catch-up for {subject}; automatic run is not enabled."
+        if reason == "rain_satisfied":
+            return f"No catch-up for {subject}; rain evidence satisfied the skip."
+        if reason == "outside_safe_window":
+            return f"Deferred catch-up for {subject}; outside the safe window."
+        if reason == "duplicate_event_lockout":
+            return f"Skipped duplicate catch-up for {subject}; event is locked out."
+        if reason == "controller_unavailable":
+            return f"Deferred catch-up for {subject}; controller is unavailable."
+        return f"Deferred catch-up for {subject}; {reason.replace('_', ' ')}."
+    if status in {"not_needed", "monitoring"}:
+        return "No catch-up action needed."
+    return f"Catch-up status: {status.replace('_', ' ')}."
+
+
 def build_rachio_evidence(
     client: RachioClient,
     linked_entities: LinkedRachioEntities,
@@ -1729,13 +2683,21 @@ def build_rachio_evidence(
 ) -> RachioEvidenceSnapshot:
     """Build a site-level evidence snapshot from the public Rachio API."""
     devices = client.list_person_devices()
-    controller = choose_controller(devices, expected_zone_count, preferred_name)
+    discovered_zone_count = len(linked_entities.zone_entities) or len(
+        linked_entities.zone_switches
+    )
+    controller = choose_controller(
+        devices,
+        discovered_zone_count or expected_zone_count,
+        preferred_name,
+    )
     if controller is None:
         raise RachioClientError("No sprinkler controller with enabled zones was found.")
 
     controller_id = str(controller["id"])
     controller_name = str(controller.get("name", "Rachio Controller"))
     forecast_getter = getattr(client, "get_device_forecast", None)
+    forecast_payload: dict[str, object] | None = None
     if callable(forecast_getter):
         try:
             forecast_payload = forecast_getter(controller_id, units="METRIC")
@@ -1750,6 +2712,12 @@ def build_rachio_evidence(
         weather_source_probe = build_rachio_weather_probe(controller, None)
         weather_source_probe["reason"] = (
             "Rachio forecast/source probe unavailable in the current API adapter."
+        )
+    weather_outlook = build_rachio_weather_outlook(forecast_payload)
+    if weather_source_probe.get("status") == "forecast_unavailable":
+        weather_outlook["reason"] = weather_source_probe.get(
+            "reason",
+            weather_outlook["reason"],
         )
     now = dt_util.now()
     events = client.list_device_events(
@@ -1817,8 +2785,18 @@ def build_rachio_evidence(
         rule_id = str(rule["id"])
         name = str(rule.get("name", rule_id))
         matched_schedule_entity = match_schedule_entity(name, linked_entities)
-        matched_zone_entity = match_zone_entity(name, linked_entities)
-        controller_zone_id = match_controller_zone(name, controller)
+        controller_zone_id = (
+            match_controller_zone_from_rule(rule, controller)
+            or match_controller_zone(name, controller)
+        )
+        matched_zone_entity = (
+            match_zone_entity_by_controller_zone(
+                controller_zone_id,
+                controller,
+                linked_entities,
+            )
+            or match_zone_entity(name, linked_entities)
+        )
         imported_image_path = None
         photo_import_enabled = bool(import_zone_photos)
         photo_import_status = "disabled" if not photo_import_enabled else "missing"
@@ -1927,6 +2905,8 @@ def build_rachio_evidence(
                 rachio_image_available=rachio_image_available,
                 photo_import_status=photo_import_status,
                 photo_import_reason=photo_import_reason,
+                next_run_at=schedule_rule_next_run(rule, controller),
+                watering_days=schedule_rule_watering_days(rule),
             )
         )
 
@@ -1956,6 +2936,7 @@ def build_rachio_evidence(
         ),
         schedule_snapshots=tuple(schedule_snapshots),
         weather_source_probe=weather_source_probe,
+        weather_outlook=weather_outlook,
     )
 
 
@@ -1988,6 +2969,7 @@ class RachioSupervisorCoordinator(DataUpdateCoordinator[SupervisorSnapshot]):
         self._lockouts: dict[str, dict[str, object]] = {}
         self._auto_moisture_write_lockouts: dict[str, dict[str, object]] = {}
         self._moisture_write_status_by_rule: dict[str, str] = {}
+        self._moisture_evidence_cache: dict[str, MoistureEvidenceCacheEntry] = {}
         self._latest_catch_up_decision: dict[str, object] = {
             "status": "not_needed",
             "reason": "monitoring",
@@ -2169,6 +3151,8 @@ class RachioSupervisorCoordinator(DataUpdateCoordinator[SupervisorSnapshot]):
                 or schedule.auto_moisture_write_status != "eligible"
                 or schedule.controller_zone_id is None
                 or schedule.write_value is None
+                or schedule.moisture_freshness != "fresh"
+                or "boundary_value_needs_calibration" in schedule.moisture_quality_flags
             ):
                 continue
             try:
@@ -2395,6 +3379,7 @@ class RachioSupervisorCoordinator(DataUpdateCoordinator[SupervisorSnapshot]):
         webhook_external_id = None
         flow_alert_snapshots: tuple[FlowAlertSnapshot, ...] = ()
         schedule_snapshots: tuple[ScheduleSnapshot, ...] = ()
+        weather_outlook: dict[str, object] | None = None
 
         api_key = linked_entry.data.get(CONF_API_KEY) if linked_entry else None
         expected_webhook_id = linked_entry.data.get(CONF_WEBHOOK_ID) if linked_entry else None
@@ -2478,6 +3463,7 @@ class RachioSupervisorCoordinator(DataUpdateCoordinator[SupervisorSnapshot]):
             webhook_url = evidence.webhook_url
             webhook_external_id = evidence.webhook_external_id
             flow_alert_snapshots = evidence.flow_alert_snapshots
+            weather_outlook = evidence.weather_outlook
             if webhook_health == "unknown":
                 webhook_health = (
                     "healthy"
@@ -2492,6 +3478,8 @@ class RachioSupervisorCoordinator(DataUpdateCoordinator[SupervisorSnapshot]):
                 auto_moisture_write_schedule_entities,
                 self._moisture_write_status_by_rule,
                 bool(moisture_mode),
+                self._moisture_evidence_cache,
+                current,
             )
             if moisture_mode and auto_moisture_write_schedule_entities:
                 try:
@@ -2512,6 +3500,8 @@ class RachioSupervisorCoordinator(DataUpdateCoordinator[SupervisorSnapshot]):
                     auto_moisture_write_schedule_entities,
                     self._moisture_write_status_by_rule,
                     bool(moisture_mode),
+                    self._moisture_evidence_cache,
+                    current,
                 )
             if not any(schedule.moisture_entity_id for schedule in schedule_snapshots):
                 missing_inputs.append("no_active_schedule_moisture_mappings")
@@ -2522,13 +3512,9 @@ class RachioSupervisorCoordinator(DataUpdateCoordinator[SupervisorSnapshot]):
                     "Candidate moisture sensors were configured, but no explicit schedule mapping is active."
                 )
             for schedule in schedule_snapshots:
-                if schedule.moisture_entity_id and schedule.moisture_band in {
-                    "missing",
-                    "unavailable",
-                    "non_numeric",
-                }:
+                if schedule.moisture_entity_id and schedule.moisture_quality_note:
                     missing_inputs.append(
-                        f"moisture_sensor_problem:{schedule.name}:{schedule.moisture_band}"
+                        f"moisture_sensor_problem:{schedule.name}:{schedule.moisture_quality_note}"
                     )
             context_controller_available = connectivity not in {"off", "missing", "unavailable"}
             decision = evaluate_catch_up_decision(
@@ -2606,8 +3592,8 @@ class RachioSupervisorCoordinator(DataUpdateCoordinator[SupervisorSnapshot]):
             schedule
             for schedule in schedule_snapshots
             if schedule.moisture_write_back_ready == "ready"
-            and schedule.moisture_band in {"dry", "target", "wet"}
-            and schedule.moisture_value is not None
+            and schedule.moisture_freshness in {"fresh", "recent"}
+            and schedule.write_value is not None
         ]
         ready_moisture_write_count = len(ready_moisture_writes)
         moisture_write_queue = (
@@ -2663,15 +3649,27 @@ class RachioSupervisorCoordinator(DataUpdateCoordinator[SupervisorSnapshot]):
             if decision.get("decision_at") is not None
             else None
         )
+        catch_up_evidence_label = build_catch_up_evidence_label(
+            decision=decision,
+            schedules=schedule_snapshots,
+            observed_rain_best_event=observed_rain_best_event,
+            actual_rain_value=rain_resolution.value,
+            actual_rain_unit=rain_resolution.unit,
+            actual_rain_window=rain_resolution.window,
+        )
+        catch_up_action_label = build_catch_up_action_label(
+            status=catch_up_evidence_status,
+            reason=catch_up_evidence_reason,
+            schedule_name=catch_up_schedule_name,
+            runtime_minutes=catch_up_runtime_minutes,
+        )
         last_catch_up_decision = (
             (
-                f"{str(catch_up_decision_at)[:16].replace('T', ' ')}|"
-                f"{catch_up_evidence_status}|"
-                f"{catch_up_schedule_name or 'none'}|"
-                f"{catch_up_evidence_reason}"
+                f"{str(catch_up_decision_at)[:16].replace('T', ' ')} · "
+                f"{catch_up_action_label}"
             )[:255]
             if catch_up_decision_at
-            else "none"
+            else catch_up_action_label
         )
         active_flow_alerts = [
             alert
@@ -2758,6 +3756,8 @@ class RachioSupervisorCoordinator(DataUpdateCoordinator[SupervisorSnapshot]):
             catch_up_runtime_minutes=catch_up_runtime_minutes,
             catch_up_summary=catch_up_summary,
             catch_up_decision_at=catch_up_decision_at,
+            catch_up_evidence_label=catch_up_evidence_label,
+            catch_up_action_label=catch_up_action_label,
             last_catch_up_decision=last_catch_up_decision,
             active_flow_alert_count=active_flow_alert_count,
             flow_alert_queue=flow_alert_queue,
@@ -2773,6 +3773,7 @@ class RachioSupervisorCoordinator(DataUpdateCoordinator[SupervisorSnapshot]):
             zone_overview_items=zone_overview_items,
             rain_source_candidates=rain_source_candidates,
             rachio_weather_probe=evidence.weather_source_probe if evidence else None,
+            weather_outlook=weather_outlook,
             discovered_entities={
                 "connectivity": linked_entities.connectivity_entity_id,
                 "rain": linked_entities.rain_entity_id,

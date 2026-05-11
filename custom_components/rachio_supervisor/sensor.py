@@ -23,6 +23,7 @@ SITE_SENSOR_NAMES = {
     "mode": "Operating mode",
     "linked_rachio_entry": "Linked Rachio entry",
     "action_posture": "Action posture",
+    "heat_assist": "Heat assist",
     "rain_actuals_source": "Rain actuals source",
     "actual_rain_24h": "Actual rain, 24h",
     "observed_rain_24h": "Observed rain, 24h",
@@ -183,6 +184,15 @@ DESCRIPTIONS = (
         value_fn=lambda data: data.action_posture,
     ),
     RachioSupervisorSensorDescription(
+        key="heat_assist",
+        translation_key="heat_assist",
+        entity_category=EntityCategory.DIAGNOSTIC,
+        value_fn=lambda data: str(
+            (data.weather_outlook or {}).get("summary")
+            or "Forecast unavailable; heat assist has no weather outlook."
+        )[:255],
+    ),
+    RachioSupervisorSensorDescription(
         key="rain_actuals_source",
         translation_key="rain_actuals_source",
         entity_category=EntityCategory.DIAGNOSTIC,
@@ -308,7 +318,7 @@ DESCRIPTIONS = (
         key="catch_up_evidence",
         translation_key="catch_up_evidence",
         entity_category=EntityCategory.DIAGNOSTIC,
-        value_fn=lambda data: data.catch_up_evidence_status,
+        value_fn=lambda data: data.catch_up_evidence_label,
     ),
     RachioSupervisorSensorDescription(
         key="last_catch_up_decision",
@@ -435,6 +445,21 @@ class RachioSupervisorSensor(RachioSupervisorEntity, SensorEntity):
                 "candidate_sources": list(data.rain_source_candidates),
                 "rachio_weather_probe": data.rachio_weather_probe,
             }
+        if self.entity_description.key == "heat_assist":
+            outlook = dict(data.weather_outlook or {})
+            return {
+                "plain_english": "Read-only Rachio forecast context for heat/top-up review. This does not execute heat top-up watering.",
+                "status": outlook.get("status", "forecast_unavailable"),
+                "heat_assist_state": outlook.get("heat_assist_state", "forecast_unavailable"),
+                "summary": outlook.get("summary"),
+                "action_label": outlook.get("action_label"),
+                "reason": outlook.get("reason"),
+                "source": outlook.get("source", "rachio_public_forecast"),
+                "used_for_actual_rain": False,
+                "current": outlook.get("current"),
+                "next": outlook.get("next"),
+                "forecast": outlook.get("forecast", []),
+            }
         if self.entity_description.key == "zone_overview":
             zones = list(data.zone_overview_items)
             photo_counts = _photo_import_counts(zones)
@@ -560,25 +585,27 @@ class RachioSupervisorSensor(RachioSupervisorEntity, SensorEntity):
             }
         if self.entity_description.key == "catch_up_evidence":
             return {
+                "status": data.catch_up_evidence_status,
                 "reason": data.catch_up_evidence_reason,
                 "schedule_name": data.catch_up_schedule_name,
                 "runtime_minutes": data.catch_up_runtime_minutes,
                 "summary": data.catch_up_summary,
                 "decision_at": data.catch_up_decision_at,
+                "evidence_label": data.catch_up_evidence_label,
+                "action_label": data.catch_up_action_label,
             }
         if self.entity_description.key == "last_catch_up_decision":
             return {
+                "status": data.catch_up_evidence_status,
                 "reason": data.catch_up_evidence_reason,
                 "schedule_name": data.catch_up_schedule_name,
                 "runtime_minutes": data.catch_up_runtime_minutes,
                 "summary": data.catch_up_summary,
                 "decision_at": data.catch_up_decision_at,
+                "evidence_label": data.catch_up_evidence_label,
+                "action_label": data.catch_up_action_label,
                 "subject": data.catch_up_schedule_name or "Catch-up monitor",
-                "brief": (
-                    f"ran {data.catch_up_runtime_minutes} min"
-                    if data.catch_up_evidence_status == "executed"
-                    else data.catch_up_evidence_status.replace("_", " ")
-                ),
+                "brief": data.catch_up_action_label,
                 "at_local": _format_at_local(data.catch_up_decision_at),
             }
         if self.entity_description.key in {
@@ -669,6 +696,17 @@ class RachioSupervisorScheduleSensor(RachioSupervisorEntity, SensorEntity):
             "moisture_value": schedule.moisture_value,
             "moisture_status": schedule.moisture_status,
             "moisture_last_updated": schedule.moisture_last_updated,
+            "moisture_observed_value": schedule.moisture_observed_value,
+            "moisture_observed_at": schedule.moisture_observed_at,
+            "moisture_age_label": schedule.moisture_age_label,
+            "moisture_freshness": schedule.moisture_freshness,
+            "moisture_confidence": schedule.moisture_confidence,
+            "moisture_quality_note": schedule.moisture_quality_note,
+            "moisture_quality_flags": list(schedule.moisture_quality_flags),
+            "moisture_source_state": schedule.moisture_source_state,
+            "moisture_source_last_updated": schedule.moisture_source_last_updated,
+            "moisture_source_age_label": schedule.moisture_source_age_label,
+            "moisture_sampling_interval_seconds": schedule.moisture_sampling_interval_seconds,
             "sensor_value": schedule.moisture_value,
             "rachio_moisture_value": schedule.rachio_moisture_value or "not_reported",
             "write_value": schedule.write_value,

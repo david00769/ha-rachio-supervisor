@@ -7,11 +7,14 @@ class RachioSupervisorZoneGridCard extends HTMLElement {
       catch_up_entity: "sensor.rachio_site_catch_up_evidence",
       moisture_entity: "sensor.rachio_site_recommended_moisture_writes",
       flow_entity: "sensor.rachio_site_active_flow_alerts",
+      calibration_entities: {},
+      auto_detect_calibration_entities: true,
       title: "Zones",
       show_disabled_photo_status: false,
       ...config,
     };
     this._durations = this._durations || new Map();
+    this._calibrationTargets = this._calibrationTargets || new Map();
   }
 
   set hass(hass) {
@@ -292,6 +295,68 @@ class RachioSupervisorZoneGridCard extends HTMLElement {
             color: var(--primary-text-color, #17201b);
             text-align: center;
           }
+          .calibration {
+            display: grid;
+            gap: 8px;
+            margin-top: 4px;
+            padding-top: 8px;
+            border-top: 1px solid var(--divider-color, rgba(255,255,255,.12));
+          }
+          .calibration-head {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 8px;
+            color: var(--primary-text-color);
+            font-weight: 650;
+          }
+          .calibration-head small {
+            color: var(--secondary-text-color);
+            font-weight: 500;
+          }
+          .calibration-grid {
+            display: grid;
+            grid-template-columns: repeat(3, minmax(0, 1fr));
+            gap: 8px;
+            align-items: end;
+          }
+          .calibration-field {
+            display: grid;
+            gap: 4px;
+            min-width: 0;
+          }
+          .calibration-field span {
+            color: var(--secondary-text-color);
+            font-size: .76rem;
+          }
+          .calibration-field strong,
+          .calibration-field output {
+            color: var(--primary-text-color);
+            font-size: .9rem;
+            font-weight: 650;
+            min-height: 31px;
+            display: inline-flex;
+            align-items: center;
+          }
+          .calibration-field input {
+            width: 100%;
+            min-width: 0;
+          }
+          .calibration-actions {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            gap: 8px;
+            min-width: 0;
+          }
+          .calibration-actions code {
+            color: var(--secondary-text-color);
+            font-size: .74rem;
+            overflow-wrap: anywhere;
+          }
+          .calibration-actions button {
+            white-space: nowrap;
+          }
           button {
             display: inline-flex;
             align-items: center;
@@ -359,6 +424,13 @@ class RachioSupervisorZoneGridCard extends HTMLElement {
             .photo img {
               height: 156px;
             }
+            .calibration-grid {
+              grid-template-columns: 1fr;
+            }
+            .calibration-actions {
+              align-items: flex-start;
+              flex-direction: column;
+            }
           }
         </style>
         <div class="wrap">
@@ -385,7 +457,9 @@ class RachioSupervisorZoneGridCard extends HTMLElement {
     const reason = health.attributes?.supervisor_reason || health.state || "not reported";
     const moistureCount = Number.parseInt(moisture.state || "0", 10) || 0;
     const flowCount = Number.parseInt(flow.state || "0", 10) || 0;
-    const catchUpState = catchUp.state || "none";
+    const catchUpState = catchUp.attributes?.status || catchUp.state || "none";
+    const catchUpEvidence = catchUp.attributes?.evidence_label || catchUp.state || "";
+    const catchUpAction = catchUp.attributes?.action_label || "";
     const healthState = health.state || "unknown";
     const webhookState = webhook.state || "unknown";
     const unknown = ["unknown", "unavailable"].includes(healthState)
@@ -403,6 +477,8 @@ class RachioSupervisorZoneGridCard extends HTMLElement {
       healthState,
       webhookState,
       catchUpState,
+      catchUpEvidence,
+      catchUpAction,
       moistureCount,
       flowCount,
       reason,
@@ -487,7 +563,7 @@ class RachioSupervisorZoneGridCard extends HTMLElement {
       return "Moisture writes are recommended.";
     }
     if (!["none", "not_needed", "monitoring", "unknown", "unavailable"].includes(supervisor.catchUpState)) {
-      return `Catch-up review: ${supervisor.catchUpState}`;
+      return supervisor.catchUpAction || supervisor.catchUpEvidence || `Catch-up review: ${supervisor.catchUpState}`;
     }
     return "";
   }
@@ -498,6 +574,7 @@ class RachioSupervisorZoneGridCard extends HTMLElement {
     const canRun = Boolean(zone.zone_entity_id || zone.schedule_entity_id || zone.schedule_name);
     const imagePath = zone.image_path || zone.fallback_image_path || "";
     const fallbackPath = zone.fallback_image_path || "";
+    const calibration = this._calibrationState(zone);
     return `
       <section class="zone">
         <div class="photo">
@@ -513,7 +590,7 @@ class RachioSupervisorZoneGridCard extends HTMLElement {
         <div class="body">
           <div class="badges">
             ${this._badge("mdi:weather-rainy", this._rainLabel(zone), this._rainTone(zone))}
-            ${this._badge("mdi:water-percent", zone.moisture_band || "moisture", this._moistureTone(zone))}
+            ${this._badge("mdi:water-percent", this._moistureLabel(zone), this._moistureTone(zone), this._moistureTitle(zone))}
             ${this._badge("mdi:pipe-leak", this._flowLabel(zone), this._flowTone(zone))}
           </div>
           <div class="next">
@@ -544,6 +621,13 @@ class RachioSupervisorZoneGridCard extends HTMLElement {
               ${this._detailRow("Runtime", `${zone.runtime_minutes || minutes} min`)}
               ${this._detailRow("Last run", this._timeLabel(zone.last_run_at))}
               ${this._detailRow("Last skip", this._timeLabel(zone.last_skip_at, "none"))}
+              ${this._detailRow("Moisture sensor", calibration.moistureEntity || zone.moisture_entity_id || "unmapped")}
+              ${this._detailRow("Last check-in", zone.moisture_source_age_label || "unknown")}
+              ${this._detailRow("Last valid moisture", this._moistureValueLabel(zone))}
+              ${this._detailRow("Freshness", zone.moisture_freshness || "unknown")}
+              ${this._detailRow("Confidence", zone.moisture_confidence || "none")}
+              ${this._detailRow("Quality", zone.moisture_quality_note || "ok")}
+              ${this._calibrationTemplate(zone, index, calibration)}
             </div>
           </details>
         </div>
@@ -568,9 +652,21 @@ class RachioSupervisorZoneGridCard extends HTMLElement {
         this._durations.set(index, this._clampMinutes(input.value));
       });
     });
+    this.querySelectorAll("input[data-calibration-target-index]").forEach((input) => {
+      input.addEventListener("change", () => {
+        const index = Number(input.getAttribute("data-calibration-target-index"));
+        this._calibrationTargets.set(index, input.value);
+        this._render();
+      });
+    });
     this.querySelectorAll("button[data-quick-run-index]").forEach((button) => {
       button.addEventListener("click", () => {
         this._quickRun(Number(button.getAttribute("data-quick-run-index")));
+      });
+    });
+    this.querySelectorAll("button[data-apply-calibration-index]").forEach((button) => {
+      button.addEventListener("click", () => {
+        this._applyCalibration(Number(button.getAttribute("data-apply-calibration-index")));
       });
     });
   }
@@ -612,6 +708,36 @@ class RachioSupervisorZoneGridCard extends HTMLElement {
     }
   }
 
+  async _applyCalibration(index) {
+    const zone = this._zones?.[index];
+    if (!zone || !this._hass) {
+      return;
+    }
+    const calibration = this._calibrationState(zone);
+    const suggested = this._suggestedCalibrationValue(calibration, this._calibrationTargets.get(index));
+    if (!calibration.soilEntity || !Number.isFinite(suggested)) {
+      return;
+    }
+    const name = zone.zone_name || zone.schedule_name || "this zone";
+    if (!window.confirm(`Set ${name} soil calibration to ${this._formatCalibration(suggested)}?`)) {
+      return;
+    }
+    this._pendingCalibrationIndex = index;
+    this._render();
+    try {
+      await this._hass.callService("number", "set_value", {
+        entity_id: calibration.soilEntity,
+        value: suggested,
+      });
+      this._notify(`Updated ${name} soil calibration.`);
+    } catch (error) {
+      this._notify(`Calibration failed: ${error?.message || error}`);
+    } finally {
+      this._pendingCalibrationIndex = undefined;
+      this._render();
+    }
+  }
+
   _durationFor(zone, index) {
     return this._clampMinutes(this._durations.get(index) || zone.quick_run_minutes || zone.runtime_minutes || 3);
   }
@@ -634,6 +760,187 @@ class RachioSupervisorZoneGridCard extends HTMLElement {
   _badge(icon, label, tone, title) {
     const safeTitle = this._escapeAttr(title || label);
     return `<span class="badge ${tone}" title="${safeTitle}" aria-label="${safeTitle}"><ha-icon icon="${this._escapeAttr(icon)}"></ha-icon>${this._escape(label)}</span>`;
+  }
+
+  _calibrationTemplate(zone, index, calibration = null) {
+    calibration = calibration || this._calibrationState(zone);
+    if (!calibration.soilEntity) {
+      return "";
+    }
+    const targetValue = this._calibrationTargets.get(index) || "";
+    const suggested = this._suggestedCalibrationValue(calibration, targetValue);
+    const canApply = Number.isFinite(suggested) && this._pendingCalibrationIndex !== index;
+    const pending = this._pendingCalibrationIndex === index;
+    const source = calibration.source === "configured" ? "mapped" : "detected";
+    return `
+      <div class="calibration">
+        <div class="calibration-head">
+          <span>Calibration</span>
+          <small>${source}</small>
+        </div>
+        <div class="calibration-grid">
+          <label class="calibration-field">
+            <span>Current</span>
+            <strong>${this._escape(this._percentLabel(calibration.currentValue))}</strong>
+          </label>
+          <label class="calibration-field">
+            <span>Target</span>
+            <input type="number" min="0" max="100" step="1" inputmode="decimal" value="${this._escapeAttr(targetValue)}" placeholder="%" data-calibration-target-index="${index}">
+          </label>
+          <label class="calibration-field">
+            <span>Offset</span>
+            <output>${this._escape(Number.isFinite(suggested) ? this._formatCalibration(suggested) : this._formatCalibration(calibration.currentOffset))}</output>
+          </label>
+        </div>
+        <div class="calibration-actions">
+          <code>${this._escape(calibration.soilEntity)}</code>
+          <button type="button" class="${pending ? "running" : ""}" data-apply-calibration-index="${index}" ${canApply ? "" : "disabled"}>
+            <ha-icon icon="${pending ? "mdi:progress-clock" : "mdi:tune-variant"}"></ha-icon>
+            ${pending ? "Applying" : "Apply Offset"}
+          </button>
+        </div>
+      </div>
+    `;
+  }
+
+  _calibrationState(zone) {
+    const configured = this._configuredCalibrationEntities(zone);
+    const detected = configured.soilEntity
+      ? {}
+      : this.config.auto_detect_calibration_entities === false
+        ? {}
+        : this._detectedCalibrationEntities(zone, configured.moistureEntity);
+    const soilEntity = configured.soilEntity || detected.soilEntity || "";
+    const moistureEntity = configured.moistureEntity || detected.moistureEntity || zone.moisture_entity_id || "";
+    const soilState = soilEntity ? this._state(soilEntity) : { state: "unknown", attributes: {} };
+    const moistureState = moistureEntity ? this._state(moistureEntity) : null;
+    const fallbackMoisture = this._parseNumber(zone.moisture_observed_value || zone.moisture_value || zone.moisture_source_state);
+    return {
+      soilEntity,
+      moistureEntity,
+      source: configured.soilEntity ? "configured" : "detected",
+      currentValue: this._parseNumber(moistureState?.state, fallbackMoisture),
+      currentOffset: this._parseNumber(soilState.state),
+      min: this._parseNumber(soilState.attributes?.min, -30),
+      max: this._parseNumber(soilState.attributes?.max, 30),
+    };
+  }
+
+  _configuredCalibrationEntities(zone) {
+    const map = this.config.calibration_entities || {};
+    const keys = [
+      zone.schedule_entity_id,
+      zone.moisture_entity_id,
+      zone.zone_entity_id,
+      zone.schedule_name,
+      zone.zone_name,
+    ].filter(Boolean);
+    for (const key of keys) {
+      const value = map[key];
+      if (!value) {
+        continue;
+      }
+      if (typeof value === "string") {
+        return { soilEntity: value };
+      }
+      return {
+        soilEntity: value.soil || value.soil_calibration || value.calibration_entity || "",
+        moistureEntity: value.moisture || value.moisture_entity || value.moisture_entity_id || "",
+      };
+    }
+    return {};
+  }
+
+  _detectedCalibrationEntities(zone, moistureEntity = "") {
+    const soilEntity = this._findNumberEntity(zone, ["soil_calibration", "soil calibration"], moistureEntity);
+    return soilEntity ? { soilEntity, moistureEntity: moistureEntity || zone.moisture_entity_id || "" } : {};
+  }
+
+  _findNumberEntity(zone, markers, moistureEntity = "") {
+    const tokenSet = this._zoneMoistureTokens(zone, moistureEntity);
+    if (!tokenSet.size) {
+      return "";
+    }
+    const candidates = Object.entries(this._hass?.states || {})
+      .filter(([entityId]) => entityId.startsWith("number."))
+      .map(([entityId, state]) => {
+        const label = `${entityId} ${state.attributes?.friendly_name || ""}`.toLowerCase();
+        if (!markers.some((marker) => label.includes(marker))) {
+          return null;
+        }
+        const candidateTokens = this._tokens(label);
+        let score = 0;
+        tokenSet.forEach((token) => {
+          if (candidateTokens.has(token)) {
+            score += 1;
+          }
+        });
+        return { entityId, score };
+      })
+      .filter(Boolean)
+      .sort((a, b) => b.score - a.score);
+    if (!candidates.length || candidates[0].score <= 0) {
+      return "";
+    }
+    if (candidates[1] && candidates[1].score === candidates[0].score) {
+      return "";
+    }
+    return candidates[0].entityId;
+  }
+
+  _zoneMoistureTokens(zone, moistureEntity = "") {
+    moistureEntity = moistureEntity || zone.moisture_entity_id || "";
+    const moistureState = moistureEntity ? this._state(moistureEntity) : null;
+    return this._tokens([
+      moistureEntity,
+      moistureState?.attributes?.friendly_name || "",
+    ].join(" "));
+  }
+
+  _tokens(value) {
+    const stopWords = new Set([
+      "sensor", "number", "soil", "moisture", "calibration", "temperature",
+      "humidity", "sampling", "warning", "dry", "battery", "linkquality",
+    ]);
+    const tokens = String(value || "")
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, " ")
+      .split(" ")
+      .filter((token) => token.length > 1 && !stopWords.has(token));
+    return new Set(tokens);
+  }
+
+  _suggestedCalibrationValue(calibration, targetValue) {
+    const target = this._parseNumber(targetValue);
+    if (!Number.isFinite(target) || !Number.isFinite(calibration.currentValue)) {
+      return Number.NaN;
+    }
+    const next = calibration.currentOffset + (target - calibration.currentValue);
+    return Math.max(calibration.min, Math.min(calibration.max, Math.round(next)));
+  }
+
+  _parseNumber(value, fallback = Number.NaN) {
+    if (value === undefined || value === null || value === "" || value === "unknown" || value === "unavailable") {
+      return fallback;
+    }
+    const parsed = Number.parseFloat(String(value).replace("%", ""));
+    return Number.isFinite(parsed) ? parsed : fallback;
+  }
+
+  _percentLabel(value) {
+    if (!Number.isFinite(value)) {
+      return "none";
+    }
+    const rounded = Math.round(value * 10) / 10;
+    return `${rounded}%`;
+  }
+
+  _formatCalibration(value) {
+    if (!Number.isFinite(value)) {
+      return "unknown";
+    }
+    const rounded = Math.round(value * 10) / 10;
+    return rounded > 0 ? `+${rounded}%` : `${rounded}%`;
   }
 
   _photoBadge(zone) {
@@ -739,10 +1046,49 @@ class RachioSupervisorZoneGridCard extends HTMLElement {
   }
 
   _moistureTone(zone) {
+    if (zone.moisture_quality_note === "boundary_value_needs_calibration") return "warn";
+    if (["stale", "expired"].includes(zone.moisture_freshness)) return "muted";
+    if (["missing_sensor", "sensor_sleeping_or_offline"].includes(zone.moisture_quality_note)) return "muted";
     if (zone.moisture_band === "dry") return "issue";
     if (zone.moisture_band === "wet") return "warn";
     if (zone.moisture_band === "target") return "ok";
     return "";
+  }
+
+  _moistureLabel(zone) {
+    const note = zone.moisture_quality_note || "";
+    if (note === "boundary_value_needs_calibration") return "calibrate";
+    if (note === "missing_sensor") return "offline";
+    if (zone.moisture_freshness === "expired") return "offline";
+    if (zone.moisture_freshness === "stale") return "stale";
+    const value = zone.moisture_observed_value || zone.moisture_value;
+    const age = zone.moisture_age_label;
+    if (value) {
+      return age && age !== "unknown" ? `${value}% \u00b7 ${age}` : `${value}%`;
+    }
+    if (zone.moisture_band && !["unmapped", "missing"].includes(zone.moisture_band)) {
+      return zone.moisture_band;
+    }
+    return "moisture";
+  }
+
+  _moistureValueLabel(zone) {
+    const value = zone.moisture_observed_value || zone.moisture_value;
+    if (!value) {
+      return "none";
+    }
+    const age = zone.moisture_age_label && zone.moisture_age_label !== "unknown"
+      ? ` \u00b7 ${zone.moisture_age_label}`
+      : "";
+    return `${value}%${age}`;
+  }
+
+  _moistureTitle(zone) {
+    const source = zone.moisture_entity_id || "unmapped";
+    const freshness = zone.moisture_freshness || "unknown";
+    const confidence = zone.moisture_confidence || "none";
+    const note = zone.moisture_quality_note || "ok";
+    return `Moisture: ${source}; ${freshness}; ${confidence} confidence; ${note}`;
   }
 
   _flowLabel(zone) {

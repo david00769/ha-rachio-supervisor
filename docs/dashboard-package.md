@@ -58,7 +58,7 @@ dashboard is carrying too much low-value detail.
 
 ## Recommended sections
 
-The accepted shadow layout is zone-first, with four follow-on operator
+The accepted production layout is zone-first, with four follow-on operator
 sections. Each section owns one job so the same fact is not repeated in
 multiple places.
 
@@ -70,25 +70,31 @@ multiple places.
 
 Freshness and parity diagnostics still matter, but they should not displace the
 operator decision rail in the first viewport. Keep them as follow-on cards or a
-shadow-only appendix during the 7-day comparison window.
+small audit appendix.
 
-## Shadow and production relationship
+## Production Dashboard
 
-The shadow view is temporary. It is the proving surface used while the old
-Codex-driven irrigation workflow remains authoritative.
+The accepted plugin-backed surface should be the single production irrigation
+dashboard. Do not keep a permanent shadow copy with duplicated supervisor facts;
+that creates stale review paths and makes dashboard bugs ambiguous.
 
-After the shadow period passes, the plugin-backed sections should replace the
-old supervisor cards on the production irrigation dashboard. They should not
-remain as a second permanent page with duplicated facts.
+For the current live cutover, the production dashboard is:
 
-The intended relationship is:
+- sidebar title: `Irrigation`
+- dashboard URL path: `/irrigation-dashboard`
+- source of truth: stable `sensor.rachio_site_*` entities plus the packaged
+  `custom:rachio-supervisor-zone-grid-card`
 
-- during shadow, use the separate view to compare old and new behavior
-- during cutover, promote the accepted plugin-backed zone and Supervisor
-  sections into the
-  production irrigation dashboard
-- after cutover, keep only a small audit/diagnostic appendix for raw entity
-  detail
+The old Home-dashboard `Irrigation` view and the temporary
+`Irrigation Shadow` dashboard should stay retired after promotion. Keep only a
+small audit/diagnostic appendix for raw entity detail inside the production
+dashboard.
+
+The intended production relationship is:
+
+- use the zone grid as the first viewport
+- use weather, catch-up, moisture, flow, and audit sections below the zone grid
+- route write/acknowledge actions through generic Supervisor queue services
 - do not show the same schedule recommendation in both a "Moisture review" list
   and a separate "Schedule detail" list unless the second view adds different
   operator value
@@ -149,9 +155,9 @@ entity: sensor.rachio_site_zone_overview
 title: Zones
 ```
 
-This card should be the first card in the recommended `Irrigation Shadow`
-dashboard. Keep dense audit/status cards below it so the first viewport is the
-zone photo surface, not the raw diagnostic appendix.
+This card should be the first card in the production `Irrigation` dashboard.
+Keep dense audit/status cards below it so the first viewport is the zone photo
+surface, not the raw diagnostic appendix.
 
 The card also reads these site-level Supervisor entities by default:
 
@@ -163,6 +169,40 @@ The card also reads these site-level Supervisor entities by default:
 
 If a site uses different entity ids, override them with `health_entity`,
 `webhook_entity`, `catch_up_entity`, `moisture_entity`, and `flow_entity`.
+
+The Weather section should also include `sensor.rachio_site_heat_assist`. It is
+a read-only Rachio forecast outlook for heat/top-up review, not an implemented
+heat top-up automation.
+
+The card can also expose a simple moisture calibration assistant in each zone
+detail drawer. When a mapped soil-calibration `number` entity is available, the
+operator enters the target moisture reading for the current field condition and
+the card calculates the next offset as:
+
+`current offset + (target moisture - current moisture)`
+
+Applying the offset calls Home Assistant's `number.set_value` service after an
+explicit confirmation. This is a sensor-offset assistant only; it does not run
+watering, write moisture to Rachio, update firmware, or claim volumetric soil
+accuracy. Apply stays disabled until both the moisture sensor and calibration
+number report numeric states, so a sleepy Zigbee probe cannot be calibrated
+from an unknown current offset.
+
+Common Zigbee2MQTT-style `Soil calibration` number entities are auto-detected
+from the mapped moisture sensor name. Keep the moisture-to-schedule mapping in
+the integration options so the dashboard reads `moisture_entity_id` from the
+zone overview payload. If auto-detection is ambiguous, use
+`calibration_entities` as a narrow override by the mapped moisture entity:
+
+```yaml
+type: custom:rachio-supervisor-zone-grid-card
+entity: sensor.rachio_site_zone_overview
+title: Zones
+calibration_entities:
+  sensor.example_moisture:
+    moisture: sensor.example_moisture
+    soil: number.example_soil_calibration
+```
 
 The card reads `sensor.rachio_site_zone_overview`. Its `zones` attribute
 includes:
@@ -186,14 +226,22 @@ includes:
 - `water_badge`
 - `supervisor_badge`
 - `moisture_band`
+- `moisture_observed_value`
+- `moisture_observed_at`
+- `moisture_age_label`
+- `moisture_freshness`
+- `moisture_confidence`
+- `moisture_quality_note`
+- `moisture_source_state`
+- `moisture_entity_id`
 - `flow_alert_state`
+- `plant_note`
+- `detail_note`
 
 `image_path` always points at a loadable image: a local override, an imported
 Rachio photo, or the packaged placeholder. `image_source` records which one is
 active. `suggested_image_path` shows the filename convention to use for manual
 local overrides without causing browser 404s on a fresh install.
-- `plant_note`
-- `detail_note`
 
 Manual local overrides win over imported photos. Upload overrides to:
 
@@ -254,15 +302,17 @@ Rain evidence should keep two labels distinct:
 - `Actual rain` is the selected Home Assistant observed-rain source, with
   `window` and `confidence` attributes explaining whether the number is rolling
   24h, today, since 9am, or another source-specific total
+- `Catch-up evidence` should display the dated Rachio skip/rain amount when one
+  is driving review, with the machine status kept in the `status` attribute
 
 If the selected source is a forecast-only weather entity, the dashboard should
 show a data warning instead of silently treating forecast precipitation as rain
 that already fell.
 
-## Accepted live shadow layout
+## Accepted Live Layout
 
-The repository example should match the accepted live shadow view, not a
-future-looking abstraction. Today that means:
+The repository example should match the accepted live production dashboard, not
+a future-looking abstraction. Today that means:
 
 - the primary entity surface is `sensor.rachio_site_*`
 - the dashboard is a dedicated `Irrigation` view
@@ -282,13 +332,15 @@ future-looking abstraction. Today that means:
 - the primary surface is photo-led and icon-led; explanatory text belongs in
   zone detail drawers or Audit, not in the tile body
 
-The current accepted screenshot lives at:
+The public docs screenshot is a sanitized product capture. It should show the
+accepted layout and entity contract without live Home Assistant chrome, private
+network addresses, account details, property names, or raw house data.
 
-- [docs/assets/screenshots/shadow-dashboard-desktop.png](./assets/screenshots/shadow-dashboard-desktop.png)
+- [docs/assets/screenshots/production-dashboard-desktop.png](./assets/screenshots/production-dashboard-desktop.png)
 
 ## Frontend-skill critique
 
-Using the frontend-skill lens against the current live shadow dashboard:
+Using the frontend-skill lens against the accepted live dashboard:
 
 Strengths:
 
@@ -314,8 +366,8 @@ Remaining issues:
   moisture review list and removes the duplicate schedule-detail list unless a
   specific drill-down is needed
 
-That critique should drive future dashboard iterations before the production
-cutover, rather than treating the first live shadow view as finished.
+That critique should drive future dashboard iterations against the production
+dashboard, rather than reviving retired shadow views.
 
 ## Decision rail design
 
@@ -348,8 +400,8 @@ For v1 dashboard design, treat heatwave top-up as a future extension of the
 same decision rail:
 
 - current product term: `Catch-up / top-up outlook`
-- current implementation boundary: only show recommendation space where the
-  runtime truly has supporting evidence
+- current implementation boundary: show the Rachio forecast as `Heat assist`
+  context, but do not claim any autonomous heat top-up action
 - future policy: high-heat, low-rain, fast-drying conditions may justify a
   supervised top-up recommendation
 
@@ -376,6 +428,11 @@ So the moisture band should present:
 
 - schedule name
 - mapped sensor
+- last check-in age
+- last valid observation age
+- freshness
+- confidence
+- quality note
 - current band
 - recommendation state
 - write-back readiness
@@ -392,6 +449,8 @@ The operator contract should stay explicit:
 - `Auto` = schedule is off, watching, eligible, or blocked for auto-write
 - `Written` / `Rejected` / `Auto written` / `Auto skipped` = audit trail from
   the last write attempt
+- `Stale - no write`, `Calibrate sensor`, and `Sensor offline` = context only,
+  not write-back candidates
 
 Do not treat moisture drift as automatic top-up watering in v1.
 
@@ -401,7 +460,7 @@ than watering automation:
 - off by default
 - enabled per schedule
 - requires global moisture write-back mode
-- writes only the current mapped HA moisture percentage into Rachio
+- writes only fresh, non-boundary mapped HA moisture evidence into Rachio
 - uses a same-value cooldown
 - records the last write result for audit
 
@@ -409,9 +468,17 @@ The UI must show what changes before exposing a write action:
 
 - `HA sensor 13% -> Rachio not reported`
 - `Sensor 13% -> Rachio zone moisture`
+- `last check-in: 4h ago - fresh - high confidence`
+- `last valid: 2d ago - stale - blocked`
 
 If the Rachio public API does not expose the current zone moisture estimate,
 the dashboard must say `not reported` instead of inventing a comparison.
+
+Do not overstate sensor accuracy. CS-201Z-style sensors can sleep or report
+intermittently, so Rachio Supervisor uses the last valid dated observation
+instead of treating transient `unknown` as data loss. Repeated `0%` or `100%`
+readings should show as calibration-suspicious until corrected or explicitly
+accepted by the operator.
 
 Even when recommended writes are `0`, the dashboard should still show the
 mapped review list with:
@@ -491,21 +558,20 @@ Current review acknowledgement behavior is runtime-only. The dashboard should
 not imply those acknowledgements survive an integration reload until the product
 implements durable review state explicitly.
 
-The dashboard package should also assume a shadow-first rollout. It should stay
-useful even when:
+The dashboard package should stay useful even when:
 
 - no moisture sensors are mapped yet
 - no actual-rain entity is selected yet
 - automatic catch-up remains disabled for every schedule, or is enabled only for
-  the specific schedules selected during cutover
+  specific schedules selected during cutover
 
-## Shadow dashboard posture
+## Retired Shadow Posture
 
-The shadow dashboard should be a separate view, not a modification of the
-production irrigation dashboard.
+Shadow dashboards are temporary acceptance surfaces only. Once production is
+promoted, delete the shadow dashboard and remove stale Home-dashboard irrigation
+views so operators review one source of truth.
 
-Its job is to make old-versus-new comparison easy and to prove the replacement
-operator model before production cutover. That means:
+During a future migration shadow period:
 
 - keep the comparison band explicit
 - keep all destructive or externally visible actions gated
@@ -532,10 +598,10 @@ gate before pausing the cron runner:
 6. Pause the old cron automation once the plugin-backed integration is healthy
    and publishing catch-up decision state.
 
-## Shadow comparison note
+## Legacy Shadow Comparison Note
 
-For a conservative cutover, do not jump directly from the old Codex-published
-sensors to the new generic site-level tiles.
+This is historical cutover guidance for future migrations, not the current
+production posture.
 
 Start with a parallel shadow view that places these old and new surfaces next to
 each other:

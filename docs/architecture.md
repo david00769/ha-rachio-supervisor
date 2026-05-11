@@ -77,16 +77,48 @@ separately as `24h`, `today`, `since_9am`, `last_hour`, or another explicit
 window so the dashboard does not pretend every source is rolling 24h.
 
 Rachio weather data is handled separately. The public forecast endpoint is
-queried only to expose source/provider hints in diagnostics. Rachio forecast
-payloads are not used as actual rainfall because forecast precipitation and
-observed rainfall are different evidence classes.
+queried to expose source/provider hints and a read-only `Heat assist` weather
+outlook. Rachio forecast payloads are not used as actual rainfall because
+forecast precipitation and observed rainfall are different evidence classes.
 
 ## Moisture write boundary
 
 Moisture write-back updates Rachio's zone moisture estimate. It never starts
 watering.
 
-The runtime supports two write paths:
+Mapped moisture sensors are resolved as dated observations before they are used
+for review or write-back. The coordinator keeps a runtime cache of the last
+valid numeric sample per mapped entity so temporary `unknown` or `unavailable`
+states from sleeping MQTT/Zigbee probes do not erase useful evidence. Current
+numeric state always wins over the cache.
+
+Freshness is explicit:
+
+- `fresh`: last valid numeric sample is 6 hours old or less
+- `recent`: more than 6 hours and 30 hours old or less
+- `stale`: more than 30 hours and 72 hours old or less
+- `expired`: older than 72 hours or no valid numeric sample
+
+Manual review may use fresh or recent evidence. Bulk recommended writes use
+fresh or recent non-boundary-suspicious evidence. Auto-write is stricter: it
+requires fresh, non-boundary-suspicious evidence and still respects the
+same-value cooldown. Stale and expired moisture are display context only.
+
+CS-201Z-style sensors can report intermittently and may expose companion
+entities such as `soil_sampling`, `battery`, `linkquality`,
+`soil_calibration`, and `soil_warning`. Those companions improve confidence
+when present, but the resolver remains generic for any Home Assistant moisture
+sensor. Repeated `0%` or `100%` values are calibration-suspicious until the
+operator calibrates or manually accepts them.
+
+The dashboard card may expose a simple calibration assistant when a mapped or
+explicitly configured soil-calibration number entity is available. It computes
+an offset from the current Home Assistant moisture reading and an operator
+target, then calls `number.set_value` after confirmation. The action is disabled
+unless both the moisture reading and current calibration offset are numeric. It
+does not update sensor firmware, run watering, or write to Rachio.
+
+The runtime supports these write and review paths:
 
 - manual `write_moisture_now`, confirmation-gated in dashboard examples
 - bulk manual `write_recommended_moisture_now`, which writes only schedules

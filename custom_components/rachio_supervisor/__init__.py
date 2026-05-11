@@ -256,6 +256,24 @@ async def _async_write_schedule_moisture_value(
         raise HomeAssistantError(
             "The selected schedule does not have a usable mapped moisture value."
         )
+    if schedule.moisture_freshness not in {"fresh", "recent"}:
+        coordinator.record_moisture_write(
+            status=f"rejected_{schedule.moisture_freshness}_moisture_evidence",
+            schedule_name=schedule.name,
+            moisture_value=write_value,
+            rule_id=schedule.rule_id,
+        )
+        raise HomeAssistantError(
+            "The selected schedule does not have fresh or recent moisture evidence."
+        )
+    if "missing_sensor" in schedule.moisture_quality_flags:
+        coordinator.record_moisture_write(
+            status="rejected_missing_moisture_sensor",
+            schedule_name=schedule.name,
+            moisture_value=write_value,
+            rule_id=schedule.rule_id,
+        )
+        raise HomeAssistantError("The mapped moisture sensor is missing.")
     try:
         moisture_percent = float(write_value)
     except (TypeError, ValueError) as exc:
@@ -357,6 +375,8 @@ async def _async_handle_write_recommended_moisture_now(
             if schedule.recommended_action == "write_moisture_now"
             and schedule.moisture_write_back_ready == "ready"
             and (schedule.write_value or schedule.moisture_value) is not None
+            and schedule.moisture_freshness in {"fresh", "recent"}
+            and "boundary_value_needs_calibration" not in schedule.moisture_quality_flags
         ]
         for schedule in eligible:
             await _async_write_schedule_moisture_value(

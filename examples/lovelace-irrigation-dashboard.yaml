@@ -9,10 +9,15 @@ views:
           - type: custom:rachio-supervisor-zone-grid-card
             entity: sensor.rachio_site_zone_overview
             title: Zones
+            auto_detect_calibration_entities: true
       - type: grid
         cards:
           - type: heading
             heading: Weather
+          - type: tile
+            entity: sensor.rachio_site_heat_assist
+            name: Heat assist
+            icon: mdi:weather-sunny-alert
           - type: tile
             entity: sensor.rachio_site_observed_rain_24h
             name: Rachio skip rain

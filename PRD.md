@@ -80,6 +80,7 @@ Traits:
 - add-on-first architecture
 - Home Assistant Core inclusion as the first delivery target
 - calibration-heavy soil science and agronomy in v1
+- vendor firmware management for moisture sensors
 
 ## Product Positioning
 
@@ -153,7 +154,8 @@ Inputs:
 Interpretation:
 
 - thresholds + trends
-- not calibration-heavy agronomy
+- simple sensor-offset calibration before write-back
+- not calibration-heavy agronomy, soil science, or vendor firmware management
 
 Per-zone thresholds:
 
@@ -179,6 +181,9 @@ Dashboard stance:
 
 - moisture is shown as a schedule-linked review signal
 - moisture is expressed through bands and recommendations before raw telemetry
+- simple calibration is exposed as an operator assistant for mapped sensors; it
+  may calculate and apply Home Assistant number-entity offsets, but it must not
+  imply universal volumetric soil-moisture accuracy
 - manual write-back to Rachio comes before any automatic moisture-assisted
   action
 - no automatic top-up watering is implied by the mere existence of a moisture
@@ -284,8 +289,10 @@ The current operator model is a zone-first dashboard with four follow-on
 sections:
 
 1. `Zones` for photos, zone names, day chips, next run, compact status badges,
-   plant notes, detail drawers, and confirmation-gated Quick Run
-2. `Weather` for rain skip, actual observed rain, and catch-up/top-up posture
+   plant notes, detail drawers, confirmation-gated Quick Run, and mapped sensor
+   calibration assistance
+2. `Weather` for rain skip, actual observed rain, read-only heat/weather
+   outlook, and catch-up/top-up posture
 3. `Moisture` for mapped sensor state, `HA sensor -> Rachio` write summaries,
    manual write, and auto-write status
 4. `Flow` for the 7-day flow alert queue, calibration evidence, baseline delta,
@@ -299,7 +306,7 @@ For moisture specifically:
 - the main moisture section should answer whether measured soil moisture is far
   enough from Rachio's posture to justify a write-back
 - zone detail should only show mapped sensor, current band, and a short posture
-  note
+  note, with calibration controls kept in the detail layer
 - conservative watch zones should remain visibly non-autonomous
 
 ### Alerting and action posture
@@ -424,6 +431,7 @@ The dashboard package should include:
 - editable, confirmation-gated per-zone Quick Run
 - current site status in Audit and as zone/weather/moisture/flow badges
 - moisture + rain context
+- simple dashboard-assisted moisture sensor calibration
 - review queue / actions
 
 ### Public docs site
@@ -509,6 +517,9 @@ Initial success should be judged by:
   measurement
 - Rachio weather-source/forecast hints are collected for diagnostics only and
   do not drive actual-rain decisions
+- heat assist is a read-only weather outlook in v1; it must not show
+  unevaluated placeholder text and must not imply autonomous heat top-up
+  watering before that policy exists
 - dashboard package actions call real generic services for writing current
   recommendations and acknowledging current recommendations; packaged examples
   do not ship fake schedule-name placeholders

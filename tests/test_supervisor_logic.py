@@ -377,6 +377,7 @@ sensor_module = importlib.import_module("custom_components.rachio_supervisor.sen
 from custom_components.rachio_supervisor.const import DOMAIN
 from custom_components.rachio_supervisor.coordinator import (
     FlowAlertSnapshot,
+    MoistureEvidenceCacheEntry,
     RachioEvidenceSnapshot,
     RachioSupervisorCoordinator,
     ScheduleSnapshot,
@@ -384,14 +385,22 @@ from custom_components.rachio_supervisor.coordinator import (
     apply_moisture_mapping,
     build_rachio_evidence,
     build_rachio_weather_probe,
+    build_rachio_weather_outlook,
+    build_catch_up_action_label,
+    build_catch_up_evidence_label,
     build_flow_alert_snapshots,
     build_moisture_review_items,
     build_zone_overview_items,
     discover_rain_source_candidates,
     evaluate_cached_evidence_health,
     evaluate_catch_up_decision,
+    match_controller_zone_from_rule,
+    match_zone_entity_by_controller_zone,
     observed_rain_24h,
+    resolve_moisture_evidence,
     resolve_rain_actuals_entity,
+    schedule_rule_next_run,
+    schedule_rule_watering_days,
 )
 from custom_components.rachio_supervisor.discovery import (
     LinkedRachioEntities,
@@ -872,9 +881,9 @@ class FlowAlertClearTests(unittest.TestCase):
             refreshed.append("called")
 
         coordinator.async_request_refresh = _refresh
-        coordinator.data = types.SimpleNamespace(site_name="Sugarloaf")
+        coordinator.data = types.SimpleNamespace(site_name="Demo Site")
         hass = types.SimpleNamespace(data={DOMAIN: {"entry-1": coordinator}})
-        call = types.SimpleNamespace(data={"site_name": "Sugarloaf", "rule_id": "rule-1"})
+        call = types.SimpleNamespace(data={"site_name": "Demo Site", "rule_id": "rule-1"})
 
         with self.assertRaisesRegex(Exception, "only be cleared"):
             asyncio.run(
@@ -892,9 +901,9 @@ class FlowAlertClearTests(unittest.TestCase):
             refreshed.append("called")
 
         coordinator.async_request_refresh = _refresh
-        coordinator.data = types.SimpleNamespace(site_name="Sugarloaf")
+        coordinator.data = types.SimpleNamespace(site_name="Demo Site")
         hass = types.SimpleNamespace(data={DOMAIN: {"entry-1": coordinator}})
-        call = types.SimpleNamespace(data={"site_name": "Sugarloaf", "rule_id": "rule-1"})
+        call = types.SimpleNamespace(data={"site_name": "Demo Site", "rule_id": "rule-1"})
 
         asyncio.run(integration_init._async_handle_clear_flow_alert_review(hass, call))
 
@@ -979,6 +988,11 @@ class BulkMoistureServiceTests(unittest.TestCase):
             threshold_mm=None,
             observed_mm=None,
             write_value=write_value,
+            moisture_freshness="fresh" if write_value else "expired",
+            moisture_confidence="low" if write_value else "none",
+            moisture_observed_value=write_value,
+            moisture_observed_at="2026-05-10T02:12:51+00:00" if write_value else None,
+            moisture_age_label="4h" if write_value else "unknown",
         )
 
     def test_write_recommended_moisture_writes_only_ready_recommendations(self) -> None:
@@ -1017,7 +1031,7 @@ class BulkMoistureServiceTests(unittest.TestCase):
 
         coordinator = SimpleNamespace(
             data=SimpleNamespace(
-                site_name="Sugarloaf",
+                site_name="Demo Site",
                 rachio_config_entry_id="entry-1",
                 schedule_snapshots=schedules,
             ),
@@ -1075,7 +1089,7 @@ class BulkMoistureServiceTests(unittest.TestCase):
             refreshes.append("called")
 
         coordinator = SimpleNamespace(
-            data=SimpleNamespace(site_name="Sugarloaf", schedule_snapshots=schedules),
+            data=SimpleNamespace(site_name="Demo Site", schedule_snapshots=schedules),
             set_recommendation_acknowledged=lambda **kwargs: acks.append(
                 (kwargs["rule_id"], kwargs["acknowledged"])
             ),
@@ -1136,7 +1150,7 @@ class QuickRunServiceTests(unittest.TestCase):
 
         coordinator = SimpleNamespace(
             data=SimpleNamespace(
-                site_name="Sugarloaf",
+                site_name="Demo Site",
                 schedule_snapshots=(schedule,),
             ),
             async_request_refresh=_refresh,
@@ -1210,7 +1224,7 @@ class QuickRunServiceTests(unittest.TestCase):
             return None
 
         coordinator = SimpleNamespace(
-            data=SimpleNamespace(site_name="Sugarloaf", schedule_snapshots=(schedule,)),
+            data=SimpleNamespace(site_name="Demo Site", schedule_snapshots=(schedule,)),
             async_request_refresh=_refresh,
         )
         hass = SimpleNamespace(
@@ -1533,6 +1547,43 @@ class CadenceParityTests(unittest.TestCase):
 
 
 class RuntimeHealthAndMoistureTests(unittest.TestCase):
+    def _hass_with_states(self, state_map: dict[str, object]):
+        class _States:
+            def get(self, entity_id: str):
+                return state_map.get(entity_id)
+
+            def async_all(self):
+                return tuple(state_map.values())
+
+        return SimpleNamespace(states=_States())
+
+    def _moisture_schedule(self) -> ScheduleSnapshot:
+        return ScheduleSnapshot(
+            rule_id="rule-1",
+            name="Pots - Dawn Micro",
+            status="idle",
+            reason="none",
+            catch_up_candidate="not_needed",
+            policy_mode="observe_only",
+            policy_basis="default",
+            schedule_entity_id="switch.schedule_pots",
+            zone_entity_id="switch.zone_pots",
+            controller_zone_id="zone-1",
+            moisture_entity_id=None,
+            moisture_value=None,
+            moisture_band="unmapped",
+            moisture_status="pending",
+            moisture_write_back_ready="ready",
+            recommended_action="pending_moisture_eval",
+            review_state="pending",
+            runtime_minutes=3,
+            last_run_at=None,
+            last_skip_at=None,
+            summary="none",
+            threshold_mm=None,
+            observed_mm=None,
+        )
+
     def test_fresh_cached_evidence_is_healthy_without_optional_inputs(self) -> None:
         evidence = RachioEvidenceSnapshot(
             controller_name="Yard Controller",
@@ -1593,6 +1644,183 @@ class RuntimeHealthAndMoistureTests(unittest.TestCase):
         self.assertEqual(webhook_health, "stale")
         self.assertIn("older than", reason)
 
+    def test_moisture_evidence_live_numeric_becomes_fresh(self) -> None:
+        current = datetime.fromisoformat("2026-05-10T08:00:00+00:00")
+        state_map = {
+            "sensor.pots_soil_moisture": SimpleNamespace(
+                entity_id="sensor.pots_soil_moisture",
+                state="23",
+                attributes={},
+                last_updated=datetime.fromisoformat("2026-05-10T04:00:00+00:00"),
+            ),
+            "sensor.pots_soil_sampling": SimpleNamespace(
+                entity_id="sensor.pots_soil_sampling",
+                state="30",
+                attributes={},
+                last_updated=current,
+            ),
+        }
+
+        evidence = resolve_moisture_evidence(
+            self._hass_with_states(state_map),
+            "sensor.pots_soil_moisture",
+            cache={},
+            current=current,
+        )
+
+        self.assertEqual(evidence.observed_value, "23")
+        self.assertEqual(evidence.freshness, "fresh")
+        self.assertEqual(evidence.confidence, "high")
+        self.assertEqual(evidence.sampling_interval_seconds, 30)
+
+    def test_moisture_evidence_unknown_uses_recent_cached_value(self) -> None:
+        current = datetime.fromisoformat("2026-05-10T12:00:00+00:00")
+        cache = {
+            "sensor.pots_moisture": MoistureEvidenceCacheEntry(
+                observed_value="24",
+                observed_at="2026-05-10T00:00:00+00:00",
+            )
+        }
+        state_map = {
+            "sensor.pots_moisture": SimpleNamespace(
+                entity_id="sensor.pots_moisture",
+                state="unknown",
+                attributes={},
+                last_updated=current,
+            )
+        }
+
+        evidence = resolve_moisture_evidence(
+            self._hass_with_states(state_map),
+            "sensor.pots_moisture",
+            cache=cache,
+            current=current,
+        )
+
+        self.assertEqual(evidence.observed_value, "24")
+        self.assertEqual(evidence.freshness, "recent")
+        self.assertIn("sensor_sleeping_or_offline", evidence.quality_flags)
+        self.assertEqual(evidence.quality_note, "sensor_sleeping_or_offline")
+
+    def test_moisture_evidence_cached_36_hours_is_stale(self) -> None:
+        current = datetime.fromisoformat("2026-05-10T12:00:00+00:00")
+        cache = {
+            "sensor.pots_moisture": MoistureEvidenceCacheEntry(
+                observed_value="24",
+                observed_at="2026-05-09T00:00:00+00:00",
+            )
+        }
+
+        evidence = resolve_moisture_evidence(
+            self._hass_with_states({}),
+            "sensor.pots_moisture",
+            cache=cache,
+            current=current,
+        )
+
+        self.assertEqual(evidence.freshness, "stale")
+        self.assertEqual(evidence.quality_note, "missing_sensor")
+        self.assertIn("stale_sample", evidence.quality_flags)
+
+    def test_moisture_evidence_cached_80_hours_is_expired(self) -> None:
+        current = datetime.fromisoformat("2026-05-10T12:00:00+00:00")
+        cache = {
+            "sensor.pots_moisture": MoistureEvidenceCacheEntry(
+                observed_value="24",
+                observed_at="2026-05-07T04:00:00+00:00",
+            )
+        }
+
+        evidence = resolve_moisture_evidence(
+            self._hass_with_states({}),
+            "sensor.pots_moisture",
+            cache=cache,
+            current=current,
+        )
+
+        self.assertEqual(evidence.freshness, "expired")
+        self.assertIn("expired_sample", evidence.quality_flags)
+        self.assertEqual(evidence.confidence, "none")
+
+    def test_moisture_evidence_repeated_zero_marks_boundary_calibration(self) -> None:
+        cache: dict[str, MoistureEvidenceCacheEntry] = {}
+        first = self._hass_with_states(
+            {
+                "sensor.pots_moisture": SimpleNamespace(
+                    entity_id="sensor.pots_moisture",
+                    state="0",
+                    attributes={},
+                    last_updated=datetime.fromisoformat("2026-05-10T06:00:00+00:00"),
+                )
+            }
+        )
+        second = self._hass_with_states(
+            {
+                "sensor.pots_moisture": SimpleNamespace(
+                    entity_id="sensor.pots_moisture",
+                    state="0",
+                    attributes={},
+                    last_updated=datetime.fromisoformat("2026-05-10T06:30:00+00:00"),
+                )
+            }
+        )
+
+        resolve_moisture_evidence(
+            first,
+            "sensor.pots_moisture",
+            cache=cache,
+            current=datetime.fromisoformat("2026-05-10T06:05:00+00:00"),
+        )
+        evidence = resolve_moisture_evidence(
+            second,
+            "sensor.pots_moisture",
+            cache=cache,
+            current=datetime.fromisoformat("2026-05-10T06:35:00+00:00"),
+        )
+
+        self.assertIn("boundary_value_needs_calibration", evidence.quality_flags)
+        self.assertEqual(evidence.quality_note, "boundary_value_needs_calibration")
+
+    def test_moisture_evidence_nonnumeric_keeps_last_valid_inside_window(self) -> None:
+        current = datetime.fromisoformat("2026-05-10T12:00:00+00:00")
+        cache = {
+            "sensor.pots_moisture": MoistureEvidenceCacheEntry(
+                observed_value="22",
+                observed_at="2026-05-10T08:00:00+00:00",
+            )
+        }
+        state_map = {
+            "sensor.pots_moisture": SimpleNamespace(
+                entity_id="sensor.pots_moisture",
+                state="dry",
+                attributes={},
+                last_updated=current,
+            )
+        }
+
+        evidence = resolve_moisture_evidence(
+            self._hass_with_states(state_map),
+            "sensor.pots_moisture",
+            cache=cache,
+            current=current,
+        )
+
+        self.assertEqual(evidence.observed_value, "22")
+        self.assertEqual(evidence.freshness, "fresh")
+        self.assertEqual(evidence.quality_note, "non_numeric_state")
+
+    def test_moisture_evidence_missing_sensor_has_no_sample(self) -> None:
+        evidence = resolve_moisture_evidence(
+            self._hass_with_states({}),
+            "sensor.missing_moisture",
+            cache={},
+            current=datetime.fromisoformat("2026-05-10T12:00:00+00:00"),
+        )
+
+        self.assertIsNone(evidence.observed_value)
+        self.assertEqual(evidence.quality_note, "missing_sensor")
+        self.assertEqual(evidence.confidence, "none")
+
     def test_moisture_review_items_exist_even_without_recommendations(self) -> None:
         schedule = ScheduleSnapshot(
             rule_id="rule-1",
@@ -1619,6 +1847,11 @@ class RuntimeHealthAndMoistureTests(unittest.TestCase):
             threshold_mm=6.35,
             observed_mm=None,
             moisture_last_updated="2026-05-10T02:12:51+00:00",
+            moisture_observed_value="58",
+            moisture_observed_at="2026-05-10T02:12:51+00:00",
+            moisture_age_label="4h",
+            moisture_freshness="fresh",
+            moisture_confidence="low",
         )
 
         items = build_moisture_review_items((schedule,))
@@ -1636,6 +1869,30 @@ class RuntimeHealthAndMoistureTests(unittest.TestCase):
         self.assertEqual(items[0]["write_summary"], "Sensor 58% -> Rachio zone moisture")
         self.assertEqual(items[0]["rachio_moisture_value"], "not_reported")
         self.assertTrue(items[0]["can_write"])
+
+    def test_moisture_review_item_uses_recent_confirmation_copy(self) -> None:
+        schedule = self._moisture_schedule()
+        hydrated = replace(
+            schedule,
+            moisture_entity_id="sensor.pots_moisture",
+            moisture_value="13",
+            moisture_band="dry",
+            moisture_status="ok",
+            recommended_action="write_moisture_now",
+            review_state="pending_review",
+            write_value="13",
+            moisture_observed_value="13",
+            moisture_observed_at="2026-05-10T00:00:00+00:00",
+            moisture_age_label="12h",
+            moisture_freshness="recent",
+            moisture_confidence="medium",
+        )
+
+        item = build_moisture_review_items((hydrated,))[0]
+
+        self.assertEqual(item["posture_note"], "Recent sample - confirm before write")
+        self.assertEqual(item["moisture_age_label"], "12h")
+        self.assertEqual(item["moisture_confidence"], "medium")
 
     def test_rain_actuals_accepts_numeric_sensor(self) -> None:
         hass = SimpleNamespace(
@@ -1762,6 +2019,44 @@ class RuntimeHealthAndMoistureTests(unittest.TestCase):
         self.assertEqual(candidates[0]["status"], "ok")
         self.assertTrue(candidates[0]["selected"])
 
+    def test_rain_candidate_discovery_filters_supervisor_and_helper_noise(self) -> None:
+        states: dict[str, object] = {
+            "sensor.rachio_site_actual_rain_24h": SimpleNamespace(
+                entity_id="sensor.rachio_site_actual_rain_24h",
+                state="unconfigured",
+                attributes={"friendly_name": "Rachio Site Actual rain, 24h"},
+            ),
+            "input_text.sugarloaf_irrigation_rain_catch_up_state": SimpleNamespace(
+                entity_id="input_text.sugarloaf_irrigation_rain_catch_up_state",
+                state="2026-05-11 07:26|deferred|lawn|rain_satisfied",
+                attributes={"friendly_name": "Sugarloaf Irrigation Rain Catch-up State"},
+            ),
+            "automation.sugarloaf_irrigation_rain_catch_up_lawn": SimpleNamespace(
+                entity_id="automation.sugarloaf_irrigation_rain_catch_up_lawn",
+                state="off",
+                attributes={"friendly_name": "Sugarloaf Irrigation Rain Catch-up - Lawn"},
+            ),
+            "sensor.backyard_rain_24h": SimpleNamespace(
+                entity_id="sensor.backyard_rain_24h",
+                state="3.2",
+                attributes={
+                    "friendly_name": "Backyard Rain 24h",
+                    "device_class": "precipitation",
+                    "unit_of_measurement": "mm",
+                },
+            ),
+        }
+        hass = SimpleNamespace(
+            states=SimpleNamespace(
+                get=lambda entity_id: states.get(entity_id),
+                async_all=lambda: list(states.values()),
+            )
+        )
+
+        candidates = discover_rain_source_candidates(hass)
+
+        self.assertEqual([item["entity_id"] for item in candidates], ["sensor.backyard_rain_24h"])
+
     def test_rachio_weather_probe_is_diagnostic_only(self) -> None:
         probe = build_rachio_weather_probe(
             {
@@ -1776,6 +2071,247 @@ class RuntimeHealthAndMoistureTests(unittest.TestCase):
         self.assertFalse(probe["used_for_actual_rain"])
         paths = [hint["path"] for hint in probe["hints"]]
         self.assertIn("controller.weatherStationId", paths)
+
+    def test_rachio_weather_outlook_summarizes_forecast_without_actual_rain(self) -> None:
+        outlook = build_rachio_weather_outlook(
+            {
+                "current": {
+                    "weatherSummary": "Showers",
+                    "temperature": 18.2,
+                    "precipIntensity": 0.61,
+                    "precipProbability": 0.49,
+                },
+                "forecast": [
+                    {"weatherSummary": "Showers", "calculatedPrecip": 0.05},
+                    {"weatherSummary": "Mostly Sunny", "calculatedPrecip": 0.0},
+                ],
+            }
+        )
+
+        self.assertEqual(outlook["status"], "forecast_available")
+        self.assertFalse(outlook["used_for_actual_rain"])
+        self.assertEqual(outlook["heat_assist_state"], "weather_outlook_only")
+        self.assertIn("Now: Showers", outlook["summary"])
+        self.assertIn("Next: Mostly Sunny", outlook["summary"])
+
+    def test_catch_up_evidence_and_action_labels_use_rain_amount(self) -> None:
+        schedule = ScheduleSnapshot(
+            rule_id="rule-front",
+            name="Front Lower Mixed Bed",
+            status="skipped_recently",
+            reason="skip",
+            catch_up_candidate="review_recommended",
+            policy_mode="observe_only",
+            policy_basis="default",
+            schedule_entity_id="switch.schedule_front",
+            zone_entity_id="switch.zone_front",
+            controller_zone_id="zone-front",
+            moisture_entity_id=None,
+            moisture_value=None,
+            moisture_band="unmapped",
+            moisture_status="pending",
+            moisture_write_back_ready="ready",
+            recommended_action="none",
+            review_state="clear",
+            runtime_minutes=45,
+            last_run_at=None,
+            last_skip_at="2026-05-06T02:01:00+10:00",
+            summary="Front skipped with low observed rain.",
+            threshold_mm=6.35,
+            observed_mm=0.17,
+        )
+        decision = {
+            "status": "deferred",
+            "reason": "review_recommended",
+            "schedule_name": "Front Lower Mixed Bed",
+        }
+
+        evidence = build_catch_up_evidence_label(
+            decision=decision,
+            schedules=(schedule,),
+            observed_rain_best_event=None,
+            actual_rain_value="unconfigured",
+            actual_rain_unit=None,
+            actual_rain_window="unconfigured",
+        )
+        action = build_catch_up_action_label(
+            status="deferred",
+            reason="review_recommended",
+            schedule_name="Front Lower Mixed Bed",
+            runtime_minutes=45,
+        )
+
+        self.assertIn("0.17 mm", evidence)
+        self.assertIn("2026-05-06", evidence)
+        self.assertIn("Review catch-up", action)
+
+    def test_schedule_rule_metadata_discovers_zone_days_and_next_run(self) -> None:
+        controller = {
+            "timeZone": "Australia/Melbourne",
+            "zones": [{"id": "zone-grass", "name": "Grass", "enabled": True}],
+        }
+        rule = {
+            "name": "Lawn - Summer Green",
+            "enabled": True,
+            "zones": [{"zoneId": "zone-grass", "duration": 3600}],
+            "scheduleJobTypes": ["DAY_OF_WEEK_2", "DAY_OF_WEEK_5"],
+            "startHour": 2,
+            "startMinute": 0,
+        }
+        linked = LinkedRachioEntities(
+            connectivity_entity_id=None,
+            rain_entity_id=None,
+            rain_delay_entity_id=None,
+            standby_entity_id=None,
+            zone_switches=("switch.rachio_grass",),
+            schedule_switches=(),
+            zone_entities=(
+                ZoneEntityRef("switch.rachio_grass", "Rachio Controller Grass", None),
+            ),
+            schedule_entities=(),
+            all_entities=("switch.rachio_grass",),
+        )
+
+        zone_id = match_controller_zone_from_rule(rule, controller)
+        zone_entity = match_zone_entity_by_controller_zone(zone_id, controller, linked)
+        next_run = schedule_rule_next_run(
+            rule,
+            controller,
+            current=datetime(2026, 5, 11, 12, 0, tzinfo=timezone.utc),
+        )
+
+        self.assertEqual(zone_id, "zone-grass")
+        self.assertEqual(zone_entity.entity_id, "switch.rachio_grass")
+        self.assertEqual(schedule_rule_watering_days(rule), ("T", "F"))
+        self.assertTrue(next_run.startswith("2026-05-12T02:00:00"))
+
+    def test_rachio_evidence_matches_schedule_to_zone_id_before_name_guess(self) -> None:
+        class _Client:
+            def list_person_devices(self):
+                return [
+                    {
+                        "id": "device-1",
+                        "name": "Rachio Controller",
+                        "timeZone": "Australia/Melbourne",
+                        "zones": [
+                            {"id": "zone-grass", "name": "Grass", "enabled": True}
+                        ],
+                        "scheduleRules": [
+                            {
+                                "id": "rule-lawn",
+                                "name": "Lawn - Summer Green",
+                                "enabled": True,
+                                "zones": [{"zoneId": "zone-grass", "duration": 3600}],
+                                "scheduleJobTypes": ["DAY_OF_WEEK_2", "DAY_OF_WEEK_5"],
+                                "startHour": 2,
+                                "startMinute": 0,
+                                "totalDuration": 3600,
+                            }
+                        ],
+                    }
+                ]
+
+            def list_device_events(self, *_args, **_kwargs):
+                return []
+
+            def list_device_webhooks(self, _device_id):
+                return []
+
+        linked = LinkedRachioEntities(
+            connectivity_entity_id=None,
+            rain_entity_id=None,
+            rain_delay_entity_id=None,
+            standby_entity_id=None,
+            zone_switches=("switch.rachio_grass",),
+            schedule_switches=("switch.rachio_lawn_summer_green_schedule",),
+            zone_entities=(
+                ZoneEntityRef("switch.rachio_grass", "Rachio Controller Grass", None),
+            ),
+            schedule_entities=(
+                ScheduleEntityRef(
+                    "switch.rachio_lawn_summer_green_schedule",
+                    "Lawn - Summer Green Schedule",
+                    None,
+                ),
+            ),
+            all_entities=(
+                "switch.rachio_grass",
+                "switch.rachio_lawn_summer_green_schedule",
+            ),
+        )
+
+        evidence = build_rachio_evidence(
+            _Client(),
+            linked,
+            1,
+            True,
+            "Rachio",
+            None,
+            None,
+            set(),
+            set(),
+            set(),
+        )
+
+        schedule = evidence.schedule_snapshots[0]
+        self.assertEqual(schedule.controller_zone_id, "zone-grass")
+        self.assertEqual(schedule.zone_entity_id, "switch.rachio_grass")
+        self.assertEqual(schedule.watering_days, ("T", "F"))
+        self.assertTrue(schedule.next_run_at)
+
+    def test_interval_schedule_next_run_uses_rachio_start_date(self) -> None:
+        controller = {"timeZone": "Australia/Melbourne", "zones": []}
+        rule = {
+            "scheduleJobTypes": ["INTERVAL_14"],
+            "startDate": 1778248800000,
+            "startHour": 2,
+            "startMinute": 0,
+            "summary": "Every 14 days at 2:00 AM",
+        }
+
+        next_run = schedule_rule_next_run(
+            rule,
+            controller,
+            current=datetime(2026, 5, 11, 12, 0, tzinfo=timezone.utc),
+        )
+
+        self.assertTrue(next_run.startswith("2026-05-23T02:00:00"))
+
+    def test_zone_overview_uses_rule_metadata_and_does_not_invent_plant_note(self) -> None:
+        schedule = ScheduleSnapshot(
+            rule_id="rule-1",
+            name="Lawn - Summer Green",
+            status="monitoring",
+            reason="watching",
+            catch_up_candidate="not_applicable",
+            policy_mode="observe_only",
+            policy_basis="default",
+            schedule_entity_id="switch.schedule_lawn",
+            zone_entity_id="switch.zone_grass",
+            controller_zone_id="zone-grass",
+            moisture_entity_id=None,
+            moisture_value=None,
+            moisture_band="unmapped",
+            moisture_status="pending",
+            moisture_write_back_ready="ready",
+            recommended_action="none",
+            review_state="clear",
+            runtime_minutes=60,
+            last_run_at=None,
+            last_skip_at=None,
+            summary="Every Tue, Fri at 2:00 AM",
+            threshold_mm=None,
+            observed_mm=None,
+            next_run_at="2026-05-12T02:00:00+10:00",
+            watering_days=("T", "F"),
+        )
+        hass = SimpleNamespace(states=SimpleNamespace(get=lambda entity_id: None))
+
+        items = build_zone_overview_items(hass, (schedule,))
+
+        self.assertEqual(items[0]["next_run"], "2026-05-12T02:00:00+10:00")
+        self.assertEqual(items[0]["watering_days"], ["T", "F"])
+        self.assertEqual(items[0]["plant_note"], "")
 
     def test_zone_overview_items_are_visual_zone_payloads(self) -> None:
         schedule = ScheduleSnapshot(
@@ -2015,6 +2551,9 @@ class RuntimeHealthAndMoistureTests(unittest.TestCase):
         self.assertEqual(items[0]["photo_import_status"], "cached")
         self.assertEqual(items[0]["moisture_band"], "dry")
         self.assertEqual(items[0]["moisture_value"], "13")
+        self.assertEqual(items[0]["moisture_observed_value"], "13")
+        self.assertEqual(items[0]["moisture_freshness"], "fresh")
+        self.assertIn("moisture_quality_note", items[0])
 
     def test_zone_overview_card_static_contract(self) -> None:
         card_path = (
@@ -2039,6 +2578,13 @@ class RuntimeHealthAndMoistureTests(unittest.TestCase):
         self.assertIn("detail-row", source)
         self.assertIn("health_entity", source)
         self.assertIn("flow_entity", source)
+        self.assertIn("calibration_entities", source)
+        self.assertIn("moisture_entity_id", source)
+        self.assertIn("moistureEntity", source)
+        self.assertIn("data-apply-calibration-index", source)
+        self.assertIn('"number", "set_value"', source)
+        self.assertIn("currentOffset: this._parseNumber(soilState.state)", source)
+        self.assertIn("_suggestedCalibrationValue", source)
         self.assertIn("_supervisorTemplate", source)
         self.assertIn("_supervisorPills", source)
         self.assertIn("Supervisor needs review", source)
@@ -2047,6 +2593,9 @@ class RuntimeHealthAndMoistureTests(unittest.TestCase):
         self.assertIn("_photoBadge", source)
         self.assertIn("No photo", source)
         self.assertIn("show_disabled_photo_status", source)
+        self.assertIn("_moistureLabel", source)
+        self.assertIn("_moistureTitle", source)
+        self.assertIn("Last valid moisture", source)
         self.assertTrue(
             (
                 REPO_ROOT
@@ -2119,6 +2668,113 @@ class RuntimeHealthAndMoistureTests(unittest.TestCase):
         self.assertTrue(mapped.rachio_image_available)
         self.assertEqual(mapped.photo_import_status, "cached")
         self.assertEqual(mapped.photo_import_reason, "imageUrl_missing")
+        self.assertEqual(mapped.moisture_observed_value, "13")
+        self.assertEqual(mapped.moisture_freshness, "fresh")
+
+    def test_recent_cached_moisture_can_recommend_manual_write_but_blocks_auto(self) -> None:
+        current = datetime.fromisoformat("2026-05-10T12:00:00+00:00")
+        cache = {
+            "sensor.pots_moisture": MoistureEvidenceCacheEntry(
+                observed_value="13",
+                observed_at="2026-05-10T00:00:00+00:00",
+            )
+        }
+        state_map = {
+            "sensor.pots_moisture": SimpleNamespace(
+                entity_id="sensor.pots_moisture",
+                state="unknown",
+                attributes={},
+                last_updated=current,
+            )
+        }
+
+        mapped = apply_moisture_mapping(
+            self._hass_with_states(state_map),
+            (self._moisture_schedule(),),
+            {"switch.schedule_pots": "sensor.pots_moisture"},
+            set(),
+            {"switch.schedule_pots"},
+            {},
+            True,
+            cache,
+            current,
+        )[0]
+
+        self.assertEqual(mapped.recommended_action, "write_moisture_now")
+        self.assertEqual(mapped.write_value, "13")
+        self.assertEqual(mapped.moisture_freshness, "recent")
+        self.assertEqual(mapped.auto_moisture_write_status, "blocked")
+
+    def test_stale_and_expired_moisture_block_recommendations(self) -> None:
+        current = datetime.fromisoformat("2026-05-10T12:00:00+00:00")
+        for observed_at, expected in (
+            ("2026-05-09T00:00:00+00:00", "stale"),
+            ("2026-05-07T04:00:00+00:00", "expired"),
+        ):
+            with self.subTest(expected=expected):
+                mapped = apply_moisture_mapping(
+                    self._hass_with_states({}),
+                    (self._moisture_schedule(),),
+                    {"switch.schedule_pots": "sensor.pots_moisture"},
+                    set(),
+                    {"switch.schedule_pots"},
+                    {},
+                    True,
+                    {
+                        "sensor.pots_moisture": MoistureEvidenceCacheEntry(
+                            observed_value="13",
+                            observed_at=observed_at,
+                        )
+                    },
+                    current,
+                )[0]
+
+                self.assertEqual(mapped.moisture_freshness, expected)
+                self.assertEqual(mapped.recommended_action, "repair_moisture_sensor")
+                self.assertIsNone(mapped.write_value)
+
+    def test_boundary_moisture_blocks_recommendation_and_auto_write(self) -> None:
+        cache: dict[str, MoistureEvidenceCacheEntry] = {}
+        schedule = self._moisture_schedule()
+        first_state = SimpleNamespace(
+            entity_id="sensor.pots_moisture",
+            state="0",
+            attributes={},
+            last_updated=datetime.fromisoformat("2026-05-10T06:00:00+00:00"),
+        )
+        second_state = SimpleNamespace(
+            entity_id="sensor.pots_moisture",
+            state="0",
+            attributes={},
+            last_updated=datetime.fromisoformat("2026-05-10T06:30:00+00:00"),
+        )
+
+        apply_moisture_mapping(
+            self._hass_with_states({"sensor.pots_moisture": first_state}),
+            (schedule,),
+            {"switch.schedule_pots": "sensor.pots_moisture"},
+            set(),
+            {"switch.schedule_pots"},
+            {},
+            True,
+            cache,
+            datetime.fromisoformat("2026-05-10T06:05:00+00:00"),
+        )
+        mapped = apply_moisture_mapping(
+            self._hass_with_states({"sensor.pots_moisture": second_state}),
+            (schedule,),
+            {"switch.schedule_pots": "sensor.pots_moisture"},
+            set(),
+            {"switch.schedule_pots"},
+            {},
+            True,
+            cache,
+            datetime.fromisoformat("2026-05-10T06:35:00+00:00"),
+        )[0]
+
+        self.assertEqual(mapped.recommended_action, "calibrate_moisture_sensor")
+        self.assertEqual(mapped.auto_moisture_write_status, "watching")
+        self.assertIn("boundary_value_needs_calibration", mapped.moisture_quality_flags)
 
     def test_auto_moisture_write_records_written_then_cooldown(self) -> None:
         schedule = ScheduleSnapshot(
@@ -2149,6 +2805,11 @@ class RuntimeHealthAndMoistureTests(unittest.TestCase):
             write_summary="Sensor 13% -> Rachio zone moisture",
             auto_moisture_write_enabled=True,
             auto_moisture_write_status="eligible",
+            moisture_observed_value="13",
+            moisture_observed_at="2026-05-10T02:12:51+00:00",
+            moisture_age_label="4h",
+            moisture_freshness="fresh",
+            moisture_confidence="low",
         )
         calls: list[tuple[str, float]] = []
 
@@ -2204,6 +2865,51 @@ class ConfigFlowBehaviorTests(unittest.TestCase):
             config_entries=SimpleNamespace(async_entries=lambda _domain=None: []),
         )
 
+    def test_discovers_likely_moisture_sensors_for_config_defaults(self) -> None:
+        states = [
+            SimpleNamespace(
+                entity_id="sensor.pots_soil_moisture",
+                attributes={
+                    "friendly_name": "Pots soil moisture",
+                    "unit_of_measurement": "%",
+                },
+            ),
+            SimpleNamespace(
+                entity_id="sensor.pots_soil_temperature",
+                attributes={"friendly_name": "Pots soil temperature"},
+            ),
+            SimpleNamespace(
+                entity_id="sensor.pots_battery",
+                attributes={"friendly_name": "Pots battery"},
+            ),
+        ]
+        hass = SimpleNamespace(states=SimpleNamespace(async_all=lambda domain: states))
+
+        discovered = config_flow.discover_moisture_sensor_entities(hass)
+
+        self.assertEqual(discovered, ["sensor.pots_soil_moisture"])
+
+    def test_discovers_zone_count_for_config_defaults(self) -> None:
+        linked = LinkedRachioEntities(
+            connectivity_entity_id=None,
+            rain_entity_id=None,
+            rain_delay_entity_id=None,
+            standby_entity_id=None,
+            zone_switches=("switch.zone_1", "switch.zone_2"),
+            schedule_switches=(),
+            zone_entities=(
+                ZoneEntityRef("switch.zone_1", "Zone 1", None),
+                ZoneEntityRef("switch.zone_2", "Zone 2", None),
+            ),
+            schedule_entities=(),
+            all_entities=("switch.zone_1", "switch.zone_2"),
+        )
+
+        with patch.object(config_flow, "discover_linked_entities", return_value=linked):
+            count = config_flow.discover_zone_count(self._hass(), "entry-1")
+
+        self.assertEqual(count, 2)
+
     def test_user_step_aborts_without_linked_rachio_entries(self) -> None:
         flow = config_flow.RachioSupervisorConfigFlow()
         flow.hass = self._hass()
@@ -2221,7 +2927,7 @@ class ConfigFlowBehaviorTests(unittest.TestCase):
         with patch.object(
             config_flow,
             "rachio_entry_options",
-            return_value=[("entry-1", "Sugarloaf Rachio")],
+            return_value=[("entry-1", "Demo Rachio")],
         ):
             result = asyncio.run(flow.async_step_user())
 
@@ -2232,7 +2938,7 @@ class ConfigFlowBehaviorTests(unittest.TestCase):
         flow = config_flow.RachioSupervisorConfigFlow()
         flow.hass = self._hass()
         flow._basic_input = {
-            "site_name": "Sugarloaf",
+            "site_name": "Demo Site",
             "rachio_config_entry_id": "entry-1",
             "moisture_sensor_entities": [],
         }
@@ -2244,7 +2950,7 @@ class ConfigFlowBehaviorTests(unittest.TestCase):
         result = asyncio.run(flow.async_step_moisture_map())
 
         self.assertEqual(result["type"], "create_entry")
-        self.assertEqual(result["title"], "Sugarloaf")
+        self.assertEqual(result["title"], "Demo Site")
         self.assertEqual(result["data"]["schedule_moisture_map"], {})
         self.assertEqual(flow._last_unique_id, "rachio_supervisor::entry-1")
 
@@ -2260,7 +2966,7 @@ class ConfigFlowBehaviorTests(unittest.TestCase):
             config_entries=SimpleNamespace(async_entries=lambda _domain=None: []),
         )
         flow._basic_input = {
-            "site_name": "Sugarloaf",
+            "site_name": "Demo Site",
             "rachio_config_entry_id": "entry-1",
             "moisture_sensor_entities": ["sensor.moisture_pots"],
         }
@@ -2297,7 +3003,7 @@ class ConfigFlowBehaviorTests(unittest.TestCase):
                 attributes={"friendly_name": "Boxwoods Liriopes Moisture"}
             )
         }
-        entry = SimpleNamespace(data={"site_name": "Sugarloaf"}, options={})
+        entry = SimpleNamespace(data={"site_name": "Demo Site"}, options={})
         flow = config_flow.RachioSupervisorOptionsFlow(entry)
         flow.hass = SimpleNamespace(
             states=SimpleNamespace(get=lambda entity_id: state_map.get(entity_id)),
@@ -2325,7 +3031,7 @@ class ConfigFlowBehaviorTests(unittest.TestCase):
                 attributes={"friendly_name": "Boxwoods Liriopes Moisture"}
             )
         }
-        entry = SimpleNamespace(data={"site_name": "Sugarloaf"}, options={})
+        entry = SimpleNamespace(data={"site_name": "Demo Site"}, options={})
         flow = config_flow.RachioSupervisorOptionsFlow(entry)
         flow.hass = SimpleNamespace(
             states=SimpleNamespace(get=lambda entity_id: state_map.get(entity_id)),
@@ -2365,7 +3071,7 @@ class ConfigFlowBehaviorTests(unittest.TestCase):
                 attributes={"friendly_name": "Driveway - South/Hedge Moisture"}
             ),
         }
-        entry = SimpleNamespace(data={"site_name": "Sugarloaf"}, options={})
+        entry = SimpleNamespace(data={"site_name": "Demo Site"}, options={})
         flow = config_flow.RachioSupervisorOptionsFlow(entry)
         flow.hass = SimpleNamespace(
             states=SimpleNamespace(get=lambda entity_id: state_map.get(entity_id)),
@@ -2415,7 +3121,7 @@ class ConfigFlowBehaviorTests(unittest.TestCase):
                 attributes={"friendly_name": "Boxwoods Liriopes Moisture"}
             )
         }
-        entry = SimpleNamespace(data={"site_name": "Sugarloaf"}, options={})
+        entry = SimpleNamespace(data={"site_name": "Demo Site"}, options={})
         flow = config_flow.RachioSupervisorOptionsFlow(entry)
         flow.hass = SimpleNamespace(
             states=SimpleNamespace(get=lambda entity_id: state_map.get(entity_id)),
@@ -2441,7 +3147,7 @@ class ConfigFlowBehaviorTests(unittest.TestCase):
         )
 
     def test_options_flow_skips_mapping_when_no_sensors_selected(self) -> None:
-        entry = SimpleNamespace(data={"site_name": "Sugarloaf"}, options={})
+        entry = SimpleNamespace(data={"site_name": "Demo Site"}, options={})
         flow = config_flow.RachioSupervisorOptionsFlow(entry)
         flow.hass = self._hass()
         flow._basic_input = {"moisture_sensor_entities": []}
@@ -2453,14 +3159,14 @@ class ConfigFlowBehaviorTests(unittest.TestCase):
         self.assertEqual(result["data"]["schedule_moisture_map"], {})
 
     def test_options_flow_uses_private_entry_storage(self) -> None:
-        entry = SimpleNamespace(data={"site_name": "Sugarloaf"}, options={})
+        entry = SimpleNamespace(data={"site_name": "Demo Site"}, options={})
         flow = config_flow.RachioSupervisorOptionsFlow(entry)
 
         self.assertIs(flow._entry, entry)
         self.assertIsNone(flow.config_entry)
 
     def test_options_flow_aborts_without_linked_rachio_entries(self) -> None:
-        entry = SimpleNamespace(data={"site_name": "Sugarloaf"}, options={})
+        entry = SimpleNamespace(data={"site_name": "Demo Site"}, options={})
         flow = config_flow.RachioSupervisorOptionsFlow(entry)
         flow.hass = self._hass()
 
@@ -2472,7 +3178,7 @@ class ConfigFlowBehaviorTests(unittest.TestCase):
 
     def test_options_flow_recovers_when_saved_linked_entry_is_missing(self) -> None:
         entry = SimpleNamespace(
-            data={"site_name": "Sugarloaf", "rachio_config_entry_id": "missing-entry"},
+            data={"site_name": "Demo Site", "rachio_config_entry_id": "missing-entry"},
             options={},
         )
         flow = config_flow.RachioSupervisorOptionsFlow(entry)
@@ -2481,7 +3187,7 @@ class ConfigFlowBehaviorTests(unittest.TestCase):
         with patch.object(
             config_flow,
             "rachio_entry_options",
-            return_value=[("entry-1", "Sugarloaf Rachio")],
+            return_value=[("entry-1", "Demo Rachio")],
         ):
             result = asyncio.run(flow.async_step_init())
 
@@ -2533,7 +3239,7 @@ class ConfigFlowBehaviorTests(unittest.TestCase):
 
     def test_options_flow_uses_unmapped_default_for_stale_moisture_mapping(self) -> None:
         entry = SimpleNamespace(
-            data={"site_name": "Sugarloaf"},
+            data={"site_name": "Demo Site"},
             options={
                 "moisture_sensor_entities": ["sensor.moisture_boxwoods"],
                 "schedule_moisture_map": {
@@ -2556,7 +3262,7 @@ class ConfigFlowBehaviorTests(unittest.TestCase):
 
     def test_flow_schema_includes_optional_rachio_photo_import(self) -> None:
         schema = config_flow._flow_schema(
-            [("entry-1", "Sugarloaf Rachio")],
+            [("entry-1", "Demo Rachio")],
             {"import_rachio_zone_photos": True},
         )
         marker = next(
@@ -2604,8 +3310,8 @@ class DiagnosticsAndEntityTests(unittest.TestCase):
             runtime_integrity="healthy",
             mode="observe_only",
             action_posture="per_zone_opt_in",
-            site_name="Sugarloaf",
-            linked_entry_title="Sugarloaf Rachio",
+            site_name="Demo Site",
+            linked_entry_title="Demo Rachio",
             linked_entry_state="loaded",
             rachio_config_entry_id="entry-1",
             rain_actuals_entity="sensor.rain_24h",
@@ -2652,6 +3358,8 @@ class DiagnosticsAndEntityTests(unittest.TestCase):
             catch_up_runtime_minutes=0,
             catch_up_summary="No active catch-up candidate.",
             catch_up_decision_at=None,
+            catch_up_evidence_label="No catch-up needed",
+            catch_up_action_label="No action",
             last_catch_up_decision="none",
             active_flow_alert_count=0,
             flow_alert_queue="none",
@@ -2692,6 +3400,10 @@ class DiagnosticsAndEntityTests(unittest.TestCase):
                 },
             ),
             rachio_weather_probe={"used_for_actual_rain": False, "hints": []},
+            weather_outlook={
+                "status": "forecast_unavailable",
+                "used_for_actual_rain": False,
+            },
             discovered_entities={"entity_count": 10},
             schedule_snapshots=(schedule,),
         )
@@ -2702,8 +3414,8 @@ class DiagnosticsAndEntityTests(unittest.TestCase):
         hass = SimpleNamespace(data={DOMAIN: {"entry-1": coordinator}})
         entry = SimpleNamespace(
             entry_id="entry-1",
-            title="Sugarloaf",
-            data={"site_name": "Sugarloaf"},
+            title="Demo Site",
+            data={"site_name": "Demo Site"},
             options={"observe_first": True},
         )
 
@@ -2716,7 +3428,7 @@ class DiagnosticsAndEntityTests(unittest.TestCase):
     def test_site_sensor_sets_explicit_name_and_attributes(self) -> None:
         snapshot = self._snapshot()
         coordinator = SimpleNamespace(
-            entry=SimpleNamespace(entry_id="entry-1", title="Sugarloaf"),
+            entry=SimpleNamespace(entry_id="entry-1", title="Demo Site"),
             data=snapshot,
             _cached_evidence=None,
         )
@@ -2751,7 +3463,7 @@ class DiagnosticsAndEntityTests(unittest.TestCase):
             ),
         )
         coordinator = SimpleNamespace(
-            entry=SimpleNamespace(entry_id="entry-1", title="Sugarloaf"),
+            entry=SimpleNamespace(entry_id="entry-1", title="Demo Site"),
             data=snapshot,
             _cached_evidence=None,
         )
@@ -2782,7 +3494,7 @@ class DiagnosticsAndEntityTests(unittest.TestCase):
     def test_health_sensor_exposes_runtime_and_data_completeness(self) -> None:
         snapshot = self._snapshot()
         coordinator = SimpleNamespace(
-            entry=SimpleNamespace(entry_id="entry-1", title="Sugarloaf"),
+            entry=SimpleNamespace(entry_id="entry-1", title="Demo Site"),
             data=snapshot,
             _cached_evidence=None,
         )
@@ -2800,6 +3512,62 @@ class DiagnosticsAndEntityTests(unittest.TestCase):
             ["rain_actuals_unconfigured"],
         )
 
+    def test_heat_assist_sensor_exposes_read_only_weather_outlook(self) -> None:
+        snapshot = replace(
+            self._snapshot(),
+            weather_outlook={
+                "status": "forecast_available",
+                "summary": "Now: Showers; Next: Mostly Sunny",
+                "heat_assist_state": "weather_outlook_only",
+                "action_label": "No heat top-up automation is implemented in v1.",
+                "source": "rachio_public_forecast",
+                "used_for_actual_rain": False,
+            },
+        )
+        coordinator = SimpleNamespace(
+            entry=SimpleNamespace(entry_id="entry-1", title="Demo Site"),
+            data=snapshot,
+            _cached_evidence=None,
+        )
+        description = next(
+            item for item in sensor_module.DESCRIPTIONS if item.key == "heat_assist"
+        )
+
+        entity = sensor_module.RachioSupervisorSensor(coordinator, description)
+
+        self.assertEqual(entity.native_value, "Now: Showers; Next: Mostly Sunny")
+        self.assertEqual(entity.extra_state_attributes["status"], "forecast_available")
+        self.assertFalse(entity.extra_state_attributes["used_for_actual_rain"])
+
+    def test_catch_up_evidence_sensor_uses_human_evidence_state_and_status_attr(self) -> None:
+        snapshot = replace(
+            self._snapshot(),
+            catch_up_evidence_status="deferred",
+            catch_up_evidence_reason="review_recommended",
+            catch_up_schedule_name="Front Lower Mixed Bed",
+            catch_up_runtime_minutes=45,
+            catch_up_evidence_label=(
+                "Front Lower Mixed Bed: Rachio skip on 2026-05-06; 0.17 mm; threshold 6.35 mm"
+            ),
+            catch_up_action_label=(
+                "Review catch-up for Front Lower Mixed Bed; automatic run is not enabled."
+            ),
+        )
+        coordinator = SimpleNamespace(
+            entry=SimpleNamespace(entry_id="entry-1", title="Demo Site"),
+            data=snapshot,
+            _cached_evidence=None,
+        )
+        description = next(
+            item for item in sensor_module.DESCRIPTIONS if item.key == "catch_up_evidence"
+        )
+
+        entity = sensor_module.RachioSupervisorSensor(coordinator, description)
+
+        self.assertIn("0.17 mm", entity.native_value)
+        self.assertEqual(entity.extra_state_attributes["status"], "deferred")
+        self.assertIn("Review catch-up", entity.extra_state_attributes["action_label"])
+
     def test_last_run_sensor_exposes_compact_decision_fields(self) -> None:
         snapshot = self._snapshot()
         snapshot = replace(
@@ -2807,7 +3575,7 @@ class DiagnosticsAndEntityTests(unittest.TestCase):
             last_run_summary="Pots - Dawn Micro ran for 3 minutes.",
         )
         coordinator = SimpleNamespace(
-            entry=SimpleNamespace(entry_id="entry-1", title="Sugarloaf"),
+            entry=SimpleNamespace(entry_id="entry-1", title="Demo Site"),
             data=snapshot,
             _cached_evidence=None,
         )
@@ -2824,7 +3592,7 @@ class DiagnosticsAndEntityTests(unittest.TestCase):
     def test_schedule_sensor_exposes_schedule_context(self) -> None:
         snapshot = self._snapshot()
         coordinator = SimpleNamespace(
-            entry=SimpleNamespace(entry_id="entry-1", title="Sugarloaf"),
+            entry=SimpleNamespace(entry_id="entry-1", title="Demo Site"),
             data=snapshot,
         )
         schedule = snapshot.schedule_snapshots[0]

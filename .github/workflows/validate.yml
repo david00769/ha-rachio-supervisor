@@ -5,16 +5,26 @@ on:
   pull_request:
 
 jobs:
-  syntax:
+  validate:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
           python-version: "3.13"
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - name: Install validation helpers
+        run: |
+          python3 -m pip install --upgrade pip
+          python3 -m pip install pyyaml
       - name: Python syntax
         run: |
           python3 -m py_compile $(find custom_components -name '*.py')
+      - name: Deterministic logic tests
+        run: |
+          python3 -m unittest -v tests.test_supervisor_logic
       - name: JSON sanity
         run: |
           python3 - <<'PY'
@@ -24,4 +34,15 @@ jobs:
               json.loads(path.read_text())
           print("json ok")
           PY
-
+      - name: YAML sanity
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          import yaml
+          for path in list(Path(".github").rglob("*.yml")) + list(Path("custom_components").rglob("*.yaml")) + list(Path("examples").rglob("*.yaml")):
+              yaml.safe_load(path.read_text())
+          print("yaml ok")
+          PY
+      - name: Lovelace card syntax
+        run: |
+          node --check custom_components/rachio_supervisor/www/rachio-supervisor-zone-grid-card.js

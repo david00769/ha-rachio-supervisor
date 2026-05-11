@@ -1,5 +1,41 @@
 # Changelog
 
+## 0.2.4 - 2026-05-11
+
+- Replaced live Home Assistant dashboard captures with sanitized public product
+  screenshots that avoid private hostnames, account UI, property names, and raw
+  house data.
+- Expanded CI validation to run the deterministic logic suite, YAML sanity
+  checks, and Lovelace card syntax checks in addition to Python and JSON
+  validation.
+- Updated the local test notes and pull request checklist to match the current
+  release-readiness bar.
+- Added dated moisture evidence handling with freshness, confidence, quality
+  notes, runtime caching through temporary sensor dropouts, stricter auto-write
+  guards, and compact zone-card moisture observations.
+- Added a simple moisture calibration assistant to the packaged zone grid card.
+  It can auto-detect or accept explicitly mapped soil-calibration number
+  entities, optionally read from an explicitly mapped moisture sensor, calculate
+  the next offset from a target reading, and apply it through Home Assistant's
+  `number.set_value` service after confirmation when both current values are
+  numeric.
+- Added a read-only `Heat assist` weather outlook from Rachio forecast data,
+  kept forecast precipitation out of actual-rain decisions, made catch-up
+  evidence and last catch-up decision states dashboard-readable, and filtered
+  Supervisor/helper noise out of observed-rain source candidates.
+- Changed zone overview construction to use Rachio schedule rule metadata for
+  zone matching, next-run timestamps, and watering-day chips instead of
+  schedule-name overlap, and stopped publishing invented plant-note copy when
+  no HA/Rachio source reports it.
+- Config flow now preselects likely soil-moisture sensor candidates discovered
+  from Home Assistant state names and attributes while keeping the final
+  per-schedule moisture mapping explicit.
+- Controller selection and setup defaults now prefer the discovered linked
+  Rachio zone count before falling back to the generic seven-zone default.
+- Promoted the live plugin-backed irrigation surface to a single production
+  dashboard at `/irrigation-dashboard`, removed the stale Home-dashboard
+  irrigation view, and retired the temporary `Irrigation Shadow` dashboard.
+
 ## 0.2.3 - 2026-05-11
 
 - Treats `v0.2.3` as the release-candidate cutover build for the cron
@@ -70,14 +106,14 @@
 - Tightened the flow-alert review gate: `normal_after_calibration` no longer auto-clears. The Supervisor now requires an explicit clear step, and that clear step is only allowed after a stable post-alert calibration comparison.
 - Fixed a shadow-install naming bug where site-level diagnostic sensors could be registered without names and end up with generic entity ids such as `sensor.sugarloaf_8`.
 - Expanded the deterministic test harness so local coverage now includes config-flow optional-input behavior, options-flow moisture mapping, site-level entity naming/state exposure, and diagnostics payload shape.
-- Replaced the stale dashboard example with the accepted live `Irrigation Shadow` layout using stable `sensor.rachio_site_*` entities.
+- Replaced the stale dashboard example with the accepted live irrigation layout using stable `sensor.rachio_site_*` entities.
 - Added screenshot assets for the current live shadow dashboard and documented a frontend-skill critique of the current operator surface, including the remaining `Recent decisions` density issue on narrow widths.
 - Tightened shadow-runtime health semantics so `Health` now reflects runtime integrity only, while optional rain/moisture gaps surface through data-completeness warnings and explicit `missing_inputs` attributes.
 - Added site-level compact moisture review payloads so mapped schedules remain visible in the dashboard even when recommended moisture writes are `0`.
 - Added compact decision attributes (`subject`, `brief`, `at_local`) for recent-decision dashboard rendering and updated the recommended Lovelace example to use built-in markdown cards instead of raw long-string entities in the first viewport.
 - Fixed the per-schedule moisture-mapping step so the active schedule name is visible directly in the mapping field label instead of relying on hidden description copy.
 - Added the fifteenth runtime milestone: moisture review items now show the proposed write contract (`HA sensor -> Rachio zone moisture`), rain actuals reject forecast-only weather entities with plain-English data warnings, flow review uses a 7-day inspection window, and schedule-level opt-in moisture auto-write can update Rachio moisture estimates without starting watering.
-- Redesigned the recommended shadow dashboard around the new 4+1 card model: Rachio Supervisor, Catch-up / top-up, Moisture drift, Flow review, and Audit.
+- Redesigned the recommended irrigation dashboard around the new 4+1 card model: Rachio Supervisor, Catch-up / top-up, Moisture drift, Flow review, and Audit.
 - Added observed-rain source discovery and richer rain-source metadata: configured actual-rain sources now expose status, reason, reporting window, confidence, likely HA rain-source candidates, and diagnostic-only Rachio weather/forecast hints.
 - Added generic dashboard-safe services for `write_recommended_moisture_now` and `acknowledge_all_recommendations`, and removed fake schedule-name placeholders from the packaged Lovelace example.
 - Reworked the recommended dashboard toward a Rachio-app-style zone-first UI: zone photos, compact icon badges, and visual weather/moisture/flow sections instead of text-heavy Supervisor cards.
