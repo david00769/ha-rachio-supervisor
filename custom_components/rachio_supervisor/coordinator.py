@@ -1061,6 +1061,10 @@ def apply_moisture_mapping(
                 auto_moisture_write_enabled=auto_write_enabled,
                 auto_moisture_write_status=auto_write_status,
                 last_moisture_write_status=last_write_status_by_rule.get(schedule.rule_id),
+                imported_image_path=schedule.imported_image_path,
+                rachio_image_available=schedule.rachio_image_available,
+                photo_import_status=schedule.photo_import_status,
+                photo_import_reason=schedule.photo_import_reason,
             )
         )
     return tuple(hydrated)

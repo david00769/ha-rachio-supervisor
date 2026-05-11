@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.2.3 - 2026-05-11
+
+- Fixed photo metadata being dropped when schedule snapshots were hydrated with
+  moisture context, which caused live zone overview rows to fall back to stale
+  `disabled` photo status after successful evidence reconciliation.
+
 ## 0.2.2 - 2026-05-11
 
 - Made `evaluate_now` clear cached Rachio evidence before requesting refresh so

@@ -1094,6 +1094,10 @@ class QuickRunServiceTests(unittest.TestCase):
             summary="none",
             threshold_mm=None,
             observed_mm=None,
+            imported_image_path="/local/rachio-supervisor/imported-zones/zone-1.jpg",
+            rachio_image_available=True,
+            photo_import_status="cached",
+            photo_import_reason="imageUrl_missing",
         )
 
         async def _service_call(domain: str, service: str, data: dict, *, blocking: bool):
@@ -1165,6 +1169,10 @@ class QuickRunServiceTests(unittest.TestCase):
             summary="none",
             threshold_mm=None,
             observed_mm=None,
+            imported_image_path="/local/rachio-supervisor/imported-zones/zone-1.jpg",
+            rachio_image_available=True,
+            photo_import_status="cached",
+            photo_import_reason="imageUrl_missing",
         )
 
         async def _service_call(domain: str, service: str, data: dict, *, blocking: bool):
@@ -1985,6 +1993,10 @@ class RuntimeHealthAndMoistureTests(unittest.TestCase):
             summary="none",
             threshold_mm=None,
             observed_mm=None,
+            imported_image_path="/local/rachio-supervisor/imported-zones/zone-1.jpg",
+            rachio_image_available=True,
+            photo_import_status="cached",
+            photo_import_reason="imageUrl_missing",
         )
         state = SimpleNamespace(
             state="13",
@@ -2011,6 +2023,13 @@ class RuntimeHealthAndMoistureTests(unittest.TestCase):
         self.assertEqual(mapped.auto_moisture_write_status, "eligible")
         self.assertEqual(mapped.write_value, "13")
         self.assertEqual(mapped.write_summary, "Sensor 13% -> Rachio zone moisture")
+        self.assertEqual(
+            mapped.imported_image_path,
+            "/local/rachio-supervisor/imported-zones/zone-1.jpg",
+        )
+        self.assertTrue(mapped.rachio_image_available)
+        self.assertEqual(mapped.photo_import_status, "cached")
+        self.assertEqual(mapped.photo_import_reason, "imageUrl_missing")
 
     def test_auto_moisture_write_records_written_then_cooldown(self) -> None:
         schedule = ScheduleSnapshot(
