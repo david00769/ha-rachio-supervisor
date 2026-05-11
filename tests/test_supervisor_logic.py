@@ -559,6 +559,52 @@ class ZonePhotoImportTests(unittest.TestCase):
         self.assertEqual(result.status, "missing")
         self.assertFalse(result.rachio_image_available)
 
+    def test_enabled_evidence_import_never_reports_disabled_status(self) -> None:
+        client = self._client(image_url=None)
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            evidence = build_rachio_evidence(
+                client,
+                self._linked_entities(),
+                1,
+                True,
+                "Test",
+                None,
+                None,
+                set(),
+                set(),
+                set(),
+                True,
+                lambda *parts: str(root.joinpath(*parts)),
+            )
+
+        schedule = evidence.schedule_snapshots[0]
+        self.assertEqual(client.zone_calls, 1)
+        self.assertEqual(schedule.photo_import_status, "missing")
+        self.assertEqual(schedule.photo_import_reason, "imageUrl_missing")
+
+    def test_enabled_evidence_import_without_config_path_reports_missing(self) -> None:
+        client = self._client()
+        evidence = build_rachio_evidence(
+            client,
+            self._linked_entities(),
+            1,
+            True,
+            "Test",
+            None,
+            None,
+            set(),
+            set(),
+            set(),
+            True,
+            None,
+        )
+
+        schedule = evidence.schedule_snapshots[0]
+        self.assertEqual(client.zone_calls, 0)
+        self.assertEqual(schedule.photo_import_status, "missing")
+        self.assertEqual(schedule.photo_import_reason, "config_path_unavailable")
+
     def test_rejects_bad_content_type_and_oversized_image(self) -> None:
         client = self._client()
         with tempfile.TemporaryDirectory() as temp_dir:

@@ -1816,16 +1816,18 @@ def build_rachio_evidence(
         matched_zone_entity = match_zone_entity(name, linked_entities)
         controller_zone_id = match_controller_zone(name, controller)
         imported_image_path = None
-        photo_import_status = "disabled"
-        photo_import_reason = None
+        photo_import_enabled = bool(import_zone_photos)
+        photo_import_status = "disabled" if not photo_import_enabled else "missing"
+        photo_import_reason = None if not photo_import_enabled else "config_path_unavailable"
         rachio_image_available = False
-        if import_zone_photos and callable(config_path):
+        if photo_import_enabled and callable(config_path):
             slug = "-".join(sorted(normalize_words(name))) or f"zone-{len(schedule_snapshots) + 1}"
             local_override = Path(
                 config_path("www", "rachio-supervisor", "zones", f"{slug}.jpg")
             )
             if local_override.exists():
-                photo_import_status = "disabled"
+                photo_import_status = "cached"
+                photo_import_reason = "local_override"
             else:
                 photo_result = import_rachio_zone_photo(
                     client=client,
