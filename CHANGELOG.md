@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.2.2 - 2026-05-11
+
+- Made `evaluate_now` clear cached Rachio evidence before requesting refresh so
+  operator-triggered reconciliation always rebuilds the live evidence path.
+- Added a runtime note when Rachio zone-photo import is enabled, making live
+  cutover diagnostics easier to confirm.
+
 ## 0.2.1 - 2026-05-11
 
 - Hardened live photo-import status reporting so enabled imports publish a

@@ -2100,6 +2100,7 @@ class RachioSupervisorCoordinator(DataUpdateCoordinator[SupervisorSnapshot]):
     def force_next_reconciliation(self) -> None:
         """Make the next refresh rebuild Rachio evidence instead of using cache."""
         self._last_reconciliation = None
+        self._cached_evidence = None
 
     def _apply_health_transition(self, health_state: str, current: datetime) -> str:
         """Update degraded/healthy mode bookkeeping and return effective mode."""
@@ -2346,6 +2347,8 @@ class RachioSupervisorCoordinator(DataUpdateCoordinator[SupervisorSnapshot]):
             missing_inputs.append(rain_resolution.missing_input)
         if rain_resolution.reason:
             notes.append(rain_resolution.reason)
+        if data.get(CONF_IMPORT_RACHIO_ZONE_PHOTOS, DEFAULT_IMPORT_RACHIO_ZONE_PHOTOS):
+            notes.append("Rachio zone photo import is enabled for this config entry.")
 
         connectivity = state_value(linked_entities.connectivity_entity_id)
         rain_state = state_value(linked_entities.rain_entity_id)
