@@ -306,6 +306,11 @@ Manual local overrides win over imported photos. Upload overrides to:
 
 `/local/rachio-supervisor/zones/<zone-slug>.jpg`
 
+The zone overview sensor also publishes `photo_import_counts` and
+`photo_import_summary` so users can see how many zones are cached, imported,
+missing, rejected, failed, or disabled without opening Developer Tools for each
+zone row.
+
 Quick Run from the card is manual, editable, and confirmation-gated. It starts
 the selected Rachio zone only for the chosen duration and does not enable
 Supervisor catch-up or moisture automation.
@@ -400,5 +405,15 @@ Initial HACS packaging is in place via:
 - `hacs.json`
 - `custom_components/rachio_supervisor/manifest.json`
 
-No release has been cut yet. The first release should happen only after the
-runtime behavior matches the documented public surface.
+Use `v0.2.3` or newer for HACS installs. That release candidate is the first
+public cutover build with cron-replacement behavior, optional Rachio zone-photo
+import, forced fresh evidence on `evaluate_now`, options-flow hardening,
+packaged placeholder fallback, and photo import diagnostics.
+
+## Known limitations
+
+- Rachio `imageUrl` may be absent for some zones or accounts.
+- Very large Rachio original images are rejected instead of hotlinked.
+- Photo import is opt-in and read-only.
+- Manual local photo overrides always win over imported Rachio photos.
+- Unresolved Rachio zones fall back to the packaged placeholder.

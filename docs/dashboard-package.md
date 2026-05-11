@@ -149,6 +149,10 @@ entity: sensor.rachio_site_zone_overview
 title: Zones
 ```
 
+This card should be the first card in the recommended `Irrigation Shadow`
+dashboard. Keep dense audit/status cards below it so the first viewport is the
+zone photo surface, not the raw diagnostic appendix.
+
 The card also reads these site-level Supervisor entities by default:
 
 - `sensor.rachio_site_health`
@@ -172,6 +176,7 @@ includes:
 - `fallback_image_path`
 - `rachio_image_available`
 - `photo_import_status`
+- `photo_import_reason`
 - `quick_run_minutes`
 - `next_run`
 - `watering_days`
@@ -200,6 +205,19 @@ Rachio zone photos under:
 `/local/rachio-supervisor/imported-zones/<zone-id>.jpg`
 
 The packaged placeholder remains the final fallback.
+
+The zone overview sensor also exposes `photo_import_counts` and
+`photo_import_summary`. Those attributes summarize disabled, cached, imported,
+missing, rejected, and failed photo states across the full zone overview so
+operators can confirm import behavior without inspecting each zone item.
+
+Known photo limits:
+
+- Rachio `imageUrl` may be absent for some zones.
+- Very large Rachio originals are rejected rather than hotlinked.
+- Photo import is opt-in and read-only.
+- Manual local overrides always win.
+- Unresolved zones use `/rachio_supervisor/zone-placeholder.svg`.
 
 The packaged card uses the real `zone_entity_id` or `schedule_entity_id` from
 the overview payload when it calls `rachio_supervisor.quick_run_zone`.

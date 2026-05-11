@@ -2,6 +2,16 @@
 
 ## 0.2.3 - 2026-05-11
 
+- Treats `v0.2.3` as the release-candidate cutover build for the cron
+  replacement path.
+- Added zone-overview photo import diagnostics through `photo_import_counts`
+  and `photo_import_summary`.
+- Added quiet photo-state badges to the packaged zone grid card: missing
+  photos show a muted `No photo` badge, rejected or failed imports show a small
+  warning badge, and normal local/imported photos stay quiet.
+- Hardened oversized photo handling when Rachio omits or sends an unusable
+  `Content-Length`: the importer now reads only up to the hard byte cap and
+  rejects only when the cap is exceeded.
 - Fixed photo metadata being dropped when schedule snapshots were hydrated with
   moisture context, which caused live zone overview rows to fall back to stale
   `disabled` photo status after successful evidence reconciliation.

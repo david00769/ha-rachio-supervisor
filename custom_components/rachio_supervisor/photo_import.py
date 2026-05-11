@@ -107,8 +107,8 @@ def _download_image(image_url: str) -> tuple[bytes, str]:
             content_type = response.headers.get("content-type", "").split(";", 1)[0].lower()
             if content_type not in ALLOWED_CONTENT_TYPES:
                 raise ValueError(f"unsupported_content_type:{content_type or 'missing'}")
-            content_length = response.headers.get("content-length")
-            if content_length and int(content_length) > MAX_IMAGE_BYTES:
+            content_length = _content_length(response.headers.get("content-length"))
+            if content_length is not None and content_length > MAX_IMAGE_BYTES:
                 raise ValueError("image_too_large")
             payload = response.read(MAX_IMAGE_BYTES + 1)
     except urllib.error.URLError as err:
@@ -118,6 +118,15 @@ def _download_image(image_url: str) -> tuple[bytes, str]:
     if not payload:
         raise ValueError("empty_image")
     return payload, content_type
+
+
+def _content_length(value: str | None) -> int | None:
+    if not value:
+        return None
+    try:
+        return int(value)
+    except ValueError:
+        return None
 
 
 def _resize_to_dashboard_jpeg(payload: bytes, content_type: str) -> bytes:

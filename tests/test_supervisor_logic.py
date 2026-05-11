@@ -424,12 +424,16 @@ class _ImageResponse:
         *,
         content_type: str = "image/jpeg",
         content_length: int | None = None,
+        include_content_length: bool = True,
     ) -> None:
         self._payload = payload
         self.headers = {
             "content-type": content_type,
-            "content-length": str(content_length if content_length is not None else len(payload)),
         }
+        if include_content_length:
+            self.headers["content-length"] = str(
+                content_length if content_length is not None else len(payload)
+            )
 
     def __enter__(self):
         return self
@@ -640,6 +644,30 @@ class ZonePhotoImportTests(unittest.TestCase):
         self.assertIn("unsupported_content_type", bad_type.reason or "")
         self.assertEqual(oversized.status, "rejected")
         self.assertEqual(oversized.reason, "image_too_large")
+
+    def test_rejects_oversized_image_without_content_length_after_capped_read(self) -> None:
+        client = self._client()
+        oversized_payload = b"x" * (photo_import.MAX_IMAGE_BYTES + 1)
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            with patch.object(
+                photo_import.urllib.request,
+                "urlopen",
+                return_value=_ImageResponse(
+                    oversized_payload,
+                    content_type="image/jpeg",
+                    include_content_length=False,
+                ),
+            ):
+                result = photo_import.import_rachio_zone_photo(
+                    client=client,
+                    zone_id="zone-1",
+                    config_path=lambda *parts: str(root.joinpath(*parts)),
+                    import_enabled=True,
+                )
+
+        self.assertEqual(result.status, "rejected")
+        self.assertEqual(result.reason, "image_too_large")
 
 
 class FlowAlertLifecycleTests(unittest.TestCase):
@@ -1930,6 +1958,64 @@ class RuntimeHealthAndMoistureTests(unittest.TestCase):
             "/rachio_supervisor/zone-placeholder.svg",
         )
 
+    def test_zone_overview_preserves_photo_metadata_after_moisture_mapping(self) -> None:
+        schedule = ScheduleSnapshot(
+            rule_id="rule-1",
+            name="Pots - Dawn Micro",
+            status="idle",
+            reason="none",
+            catch_up_candidate="not_needed",
+            policy_mode="observe_only",
+            policy_basis="default",
+            schedule_entity_id="switch.schedule_pots",
+            zone_entity_id="switch.zone_pots",
+            controller_zone_id="zone-1",
+            moisture_entity_id=None,
+            moisture_value=None,
+            moisture_band="unmapped",
+            moisture_status="pending",
+            moisture_write_back_ready="ready",
+            recommended_action="pending_moisture_eval",
+            review_state="pending",
+            runtime_minutes=3,
+            last_run_at=None,
+            last_skip_at=None,
+            summary="none",
+            threshold_mm=None,
+            observed_mm=None,
+            imported_image_path="/local/rachio-supervisor/imported-zones/zone-1.jpg",
+            rachio_image_available=True,
+            photo_import_status="cached",
+        )
+        moisture_state = SimpleNamespace(
+            state="13",
+            attributes={},
+            last_updated=datetime.fromisoformat("2026-05-10T02:12:51+00:00"),
+        )
+        state_map = {"sensor.pots_moisture": moisture_state}
+        hass = SimpleNamespace(
+            states=SimpleNamespace(get=lambda entity_id: state_map.get(entity_id))
+        )
+
+        mapped = apply_moisture_mapping(
+            hass,
+            (schedule,),
+            {"switch.schedule_pots": "sensor.pots_moisture"},
+            set(),
+            {"switch.schedule_pots"},
+            {},
+        )
+        items = build_zone_overview_items(hass, mapped)
+
+        self.assertEqual(
+            items[0]["image_path"],
+            "/local/rachio-supervisor/imported-zones/zone-1.jpg",
+        )
+        self.assertEqual(items[0]["image_source"], "rachio_import")
+        self.assertEqual(items[0]["photo_import_status"], "cached")
+        self.assertEqual(items[0]["moisture_band"], "dry")
+        self.assertEqual(items[0]["moisture_value"], "13")
+
     def test_zone_overview_card_static_contract(self) -> None:
         card_path = (
             REPO_ROOT
@@ -1958,6 +2044,9 @@ class RuntimeHealthAndMoistureTests(unittest.TestCase):
         self.assertIn("Supervisor needs review", source)
         self.assertIn("Supervisor not ready", source)
         self.assertIn("Data warnings", source)
+        self.assertIn("_photoBadge", source)
+        self.assertIn("No photo", source)
+        self.assertIn("show_disabled_photo_status", source)
         self.assertTrue(
             (
                 REPO_ROOT
@@ -2647,6 +2736,48 @@ class DiagnosticsAndEntityTests(unittest.TestCase):
             entity.extra_state_attributes["moisture_review_items"][0]["schedule_name"],
             "Pots - Dawn Micro",
         )
+
+    def test_zone_overview_sensor_exposes_photo_import_diagnostics(self) -> None:
+        snapshot = replace(
+            self._snapshot(),
+            zone_overview_items=(
+                {"zone_name": "A", "photo_import_status": "cached"},
+                {"zone_name": "B", "photo_import_status": "imported"},
+                {"zone_name": "C", "photo_import_status": "missing"},
+                {"zone_name": "D", "photo_import_status": "rejected"},
+                {"zone_name": "E", "photo_import_status": "failed"},
+                {"zone_name": "F", "photo_import_status": "disabled"},
+                {"zone_name": "G", "photo_import_status": "cached"},
+            ),
+        )
+        coordinator = SimpleNamespace(
+            entry=SimpleNamespace(entry_id="entry-1", title="Sugarloaf"),
+            data=snapshot,
+            _cached_evidence=None,
+        )
+        description = next(
+            item for item in sensor_module.DESCRIPTIONS if item.key == "zone_overview"
+        )
+
+        entity = sensor_module.RachioSupervisorSensor(coordinator, description)
+        attrs = entity.extra_state_attributes
+
+        self.assertEqual(
+            attrs["photo_import_counts"],
+            {
+                "disabled": 1,
+                "cached": 2,
+                "imported": 1,
+                "missing": 1,
+                "rejected": 1,
+                "failed": 1,
+            },
+        )
+        self.assertEqual(
+            attrs["photo_import_summary"],
+            "1 disabled, 2 cached, 1 imported, 1 missing, 1 rejected, 1 failed",
+        )
+        self.assertEqual(len(attrs["zones"]), 7)
 
     def test_health_sensor_exposes_runtime_and_data_completeness(self) -> None:
         snapshot = self._snapshot()

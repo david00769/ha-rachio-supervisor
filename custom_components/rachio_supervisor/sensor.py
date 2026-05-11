@@ -52,6 +52,15 @@ SITE_SENSOR_NAMES = {
     "last_flow_alert_decision": "Last flow alert decision",
 }
 
+PHOTO_IMPORT_STATUSES = (
+    "disabled",
+    "cached",
+    "imported",
+    "missing",
+    "rejected",
+    "failed",
+)
+
 
 def _format_at_local(value: str | None) -> str:
     """Format one ISO timestamp for compact local display."""
@@ -108,6 +117,25 @@ def _decision_compact_attrs(
         "brief": brief,
         "at_local": at_local or "none",
     }
+
+
+def _photo_import_counts(items: list[dict[str, object]]) -> dict[str, int]:
+    """Return dashboard-facing counts for zone photo import outcomes."""
+    counts = {status: 0 for status in PHOTO_IMPORT_STATUSES}
+    for item in items:
+        status = str(item.get("photo_import_status") or "disabled")
+        counts[status] = counts.get(status, 0) + 1
+    return counts
+
+
+def _photo_import_summary(counts: dict[str, int]) -> str:
+    """Return a compact operator summary for photo import state."""
+    parts = [
+        f"{counts[status]} {status}"
+        for status in PHOTO_IMPORT_STATUSES
+        if counts.get(status)
+    ]
+    return ", ".join(parts) if parts else "no zone photo metadata"
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -408,11 +436,15 @@ class RachioSupervisorSensor(RachioSupervisorEntity, SensorEntity):
                 "rachio_weather_probe": data.rachio_weather_probe,
             }
         if self.entity_description.key == "zone_overview":
+            zones = list(data.zone_overview_items)
+            photo_counts = _photo_import_counts(zones)
             return {
-                "zones": list(data.zone_overview_items),
+                "zones": zones,
                 "image_path_convention": "/local/rachio-supervisor/zones/<zone-slug>.jpg",
                 "fallback_image_path": "/rachio_supervisor/zone-placeholder.svg",
                 "quick_run_service": "rachio_supervisor.quick_run_zone",
+                "photo_import_counts": photo_counts,
+                "photo_import_summary": _photo_import_summary(photo_counts),
             }
         if self.entity_description.key == "observed_rain_24h":
             attrs = {

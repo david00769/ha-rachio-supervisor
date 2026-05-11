@@ -8,6 +8,7 @@ class RachioSupervisorZoneGridCard extends HTMLElement {
       moisture_entity: "sensor.rachio_site_recommended_moisture_writes",
       flow_entity: "sensor.rachio_site_active_flow_alerts",
       title: "Zones",
+      show_disabled_photo_status: false,
       ...config,
     };
     this._durations = this._durations || new Map();
@@ -505,6 +506,7 @@ class RachioSupervisorZoneGridCard extends HTMLElement {
           <div class="photo-status">
             ${this._badge(zone.water_icon || "mdi:calendar-clock", zone.water_badge || "watch", this._waterTone(zone))}
             ${this._badge(zone.supervisor_icon || "mdi:check-circle-outline", zone.supervisor_badge || "ok", this._supervisorTone(zone))}
+            ${this._photoBadge(zone)}
           </div>
           <div class="zone-name">${this._escape(zone.zone_name || "Rachio zone")}</div>
         </div>
@@ -632,6 +634,30 @@ class RachioSupervisorZoneGridCard extends HTMLElement {
   _badge(icon, label, tone, title) {
     const safeTitle = this._escapeAttr(title || label);
     return `<span class="badge ${tone}" title="${safeTitle}" aria-label="${safeTitle}"><ha-icon icon="${this._escapeAttr(icon)}"></ha-icon>${this._escape(label)}</span>`;
+  }
+
+  _photoBadge(zone) {
+    const source = zone.image_source || "";
+    const status = zone.photo_import_status || "";
+    if (source === "local_override" || source === "rachio_import") {
+      return "";
+    }
+    if (status === "missing") {
+      return this._badge("mdi:image-off-outline", "No photo", "muted", this._photoTitle(zone));
+    }
+    if (status === "rejected" || status === "failed") {
+      return this._badge("mdi:image-broken-variant", status, "warn", this._photoTitle(zone));
+    }
+    if (status === "disabled" && this.config.show_disabled_photo_status) {
+      return this._badge("mdi:image-outline", "photos off", "muted", this._photoTitle(zone));
+    }
+    return "";
+  }
+
+  _photoTitle(zone) {
+    const status = zone.photo_import_status || "unknown";
+    const reason = zone.photo_import_reason ? `: ${zone.photo_import_reason}` : "";
+    return `Photo import ${status}${reason}`;
   }
 
   _compactState(value) {
