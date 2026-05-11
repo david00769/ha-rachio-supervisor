@@ -1771,6 +1771,55 @@ class RuntimeHealthAndMoistureTests(unittest.TestCase):
         self.assertEqual(items[0]["detail_note"], "Drip line, flat, every second day")
         self.assertEqual(items[0]["water_badge"], "watered")
 
+    def test_zone_overview_ignores_stale_imported_cache_when_import_disabled(self) -> None:
+        schedule = ScheduleSnapshot(
+            rule_id="rule-1",
+            name="Pots - Dawn Micro",
+            status="completed_recently",
+            reason="ran",
+            catch_up_candidate="not_needed",
+            policy_mode="observe_only",
+            policy_basis="default",
+            schedule_entity_id="switch.schedule_pots",
+            zone_entity_id="switch.zone_pots",
+            controller_zone_id="zone-1",
+            moisture_entity_id=None,
+            moisture_value=None,
+            moisture_band="unmapped",
+            moisture_status="pending",
+            moisture_write_back_ready="ready",
+            recommended_action="none",
+            review_state="none",
+            runtime_minutes=3,
+            last_run_at="2026-05-10T06:00:00+10:00",
+            last_skip_at=None,
+            summary="ran",
+            threshold_mm=None,
+            observed_mm=None,
+            photo_import_status="disabled",
+        )
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            image = (
+                root
+                / "www"
+                / "rachio-supervisor"
+                / "imported-zones"
+                / "zone-1.jpg"
+            )
+            image.parent.mkdir(parents=True)
+            image.write_bytes(b"stale cache")
+            hass = SimpleNamespace(
+                states=SimpleNamespace(get=lambda entity_id: None),
+                config=SimpleNamespace(path=lambda *parts: str(root.joinpath(*parts))),
+            )
+
+            items = build_zone_overview_items(hass, (schedule,))
+
+        self.assertEqual(items[0]["image_path"], "/rachio_supervisor/zone-placeholder.svg")
+        self.assertEqual(items[0]["image_source"], "placeholder")
+        self.assertEqual(items[0]["photo_import_status"], "disabled")
+
     def test_zone_overview_uses_existing_local_zone_image(self) -> None:
         schedule = ScheduleSnapshot(
             rule_id="rule-1",

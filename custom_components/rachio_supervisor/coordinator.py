@@ -1337,10 +1337,15 @@ def build_zone_overview_items(
     for index, schedule in enumerate(schedules, start=1):
         slug = "-".join(sorted(normalize_words(schedule.name))) or f"zone-{index}"
         local_image_path = _existing_local_zone_image_path(hass, slug)
-        imported_image_path = schedule.imported_image_path or _cached_imported_zone_image_path(
-            hass,
-            schedule.controller_zone_id,
-        )
+        imported_image_path = schedule.imported_image_path
+        if (
+            not imported_image_path
+            and schedule.photo_import_status in {"cached", "imported"}
+        ):
+            imported_image_path = _cached_imported_zone_image_path(
+                hass,
+                schedule.controller_zone_id,
+            )
         if local_image_path:
             image_path = local_image_path
             image_source = "local_override"
