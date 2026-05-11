@@ -29,5 +29,6 @@ async def async_get_config_entry_diagnostics(
             "Automatic irrigation behavior remains intentionally narrow and opt-in.",
             "Moisture auto-write updates Rachio moisture estimates only; it does not start watering.",
             "Rachio weather-source hints are diagnostic only; forecast precipitation is not treated as observed rainfall.",
+            "Photo import status is concrete when the import option is enabled; disabled means the option is off.",
         ],
     }

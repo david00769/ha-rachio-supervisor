@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.2.1 - 2026-05-11
+
+- Hardened live photo-import status reporting so enabled imports publish a
+  concrete non-fatal state instead of stale `disabled` metadata.
+- Added regression coverage for enabled evidence imports with missing Rachio
+  images and unavailable HA config paths.
+
 ## 0.2.0 - 2026-05-11
 
 - Added optional Rachio-derived zone photo import. Public installs keep the
