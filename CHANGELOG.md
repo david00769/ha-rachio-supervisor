@@ -1,5 +1,23 @@
 # Changelog
 
+## 0.2.0 - 2026-05-11
+
+- Added optional Rachio-derived zone photo import. Public installs keep the
+  feature off by default; when enabled, the integration caches Rachio zone
+  photos locally under `/local/rachio-supervisor/imported-zones/<zone-id>.jpg`.
+- Preserved safe image resolution order: manual local override first, cached
+  Rachio import second, packaged placeholder last.
+- Added zone overview photo metadata, including `image_source`,
+  `rachio_image_available`, and `photo_import_status`, so dashboards can render
+  clean fallbacks without browser 404s.
+- Changed `rachio_supervisor.evaluate_now` to force a fresh Rachio evidence
+  reconciliation instead of only refreshing cached coordinator data. This keeps
+  photo import, webhook cutover checks, and operator debugging tied to live
+  evidence.
+- Hardened options-flow defaults so stale saved schedule or moisture selector
+  values are ignored in forms instead of producing a generic Home Assistant
+  options error.
+
 ## 0.1.0 - 2026-05-09
 
 - Seeded the public repo.

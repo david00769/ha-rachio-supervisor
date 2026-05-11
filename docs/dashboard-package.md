@@ -509,7 +509,8 @@ gate before pausing the cron runner:
 3. Select only reviewed schedules for automatic catch-up.
 4. Disable `observe_first` only after the selected schedules resolve to the
    intended zone entities.
-5. Run `rachio_supervisor.evaluate_now`.
+5. Run `rachio_supervisor.evaluate_now` to force fresh Rachio evidence,
+   including webhook and optional photo-import evidence.
 6. Pause the old cron automation once the plugin-backed integration is healthy
    and publishing catch-up decision state.
 

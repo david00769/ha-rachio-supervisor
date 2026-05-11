@@ -1,6 +1,6 @@
 evaluate_now:
   name: Evaluate now
-  description: Refresh the linked Rachio Supervisor entry immediately.
+  description: Force a fresh linked Rachio evidence reconciliation immediately.
   target:
     entity:
       integration: rachio_supervisor

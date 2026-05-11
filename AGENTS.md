@@ -8,4 +8,4 @@ Repository rules:
 - Treat `PRD.md` as the decision contract for public-facing scope.
 - Keep the docs site polished and restrained. The public docs should match the actual integration surface and example dashboard package.
 - Do not claim runtime behavior that is not implemented. If scaffolding exists ahead of functionality, say so plainly in docs and release notes.
-
+- Keep `rachio_supervisor.evaluate_now` as a forced fresh Rachio evidence reconciliation, not only a coordinator refresh. Photo import, webhook cutover checks, and operator debugging depend on live evidence.

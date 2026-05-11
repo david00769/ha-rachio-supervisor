@@ -2353,6 +2353,53 @@ class ConfigFlowBehaviorTests(unittest.TestCase):
 
         self.assertEqual(marker.default, ["switch.schedule_pots"])
 
+    def test_policy_schema_drops_stale_saved_schedule_defaults(self) -> None:
+        schema = config_flow._policy_schema(
+            [("switch.schedule_pots", "Pots - Dawn Micro")],
+            {
+                "auto_catch_up_schedule_entities": [
+                    "switch.schedule_pots",
+                    "switch.old_synthetic_schedule",
+                ],
+                "auto_missed_run_schedule_entities": ["switch.old_synthetic_schedule"],
+                "auto_moisture_write_schedule_entities": ["switch.old_synthetic_schedule"],
+            },
+        )
+
+        defaults = {
+            getattr(marker, "value", None): marker.default
+            for marker in schema.value
+        }
+        self.assertEqual(
+            defaults["auto_catch_up_schedule_entities"],
+            ["switch.schedule_pots"],
+        )
+        self.assertEqual(defaults["auto_missed_run_schedule_entities"], [])
+        self.assertEqual(defaults["auto_moisture_write_schedule_entities"], [])
+
+    def test_options_flow_uses_unmapped_default_for_stale_moisture_mapping(self) -> None:
+        entry = SimpleNamespace(
+            data={"site_name": "Sugarloaf"},
+            options={
+                "moisture_sensor_entities": ["sensor.moisture_boxwoods"],
+                "schedule_moisture_map": {
+                    "switch.schedule_boxwoods": "sensor.old_moisture"
+                },
+            },
+        )
+        flow = config_flow.RachioSupervisorOptionsFlow(entry)
+        flow.hass = self._hass()
+        flow._schedule_options = [("switch.schedule_boxwoods", "Boxwood + Liriope")]
+
+        result = asyncio.run(flow.async_step_moisture_map())
+
+        marker = next(
+            marker
+            for marker in result["data_schema"].value
+            if getattr(marker, "value", None) == "moisture_sensor_entity"
+        )
+        self.assertEqual(marker.default, config_flow.UNMAPPED_SENTINEL)
+
     def test_flow_schema_includes_optional_rachio_photo_import(self) -> None:
         schema = config_flow._flow_schema(
             [("entry-1", "Sugarloaf Rachio")],

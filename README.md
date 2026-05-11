@@ -385,8 +385,10 @@ Use this sequence when replacing a local cron supervisor:
 3. Configure only the schedules allowed to run automatic catch-up.
 4. Set `observe_first` to `false` only after the selected schedules and zone
    entities are correct.
-5. Call `rachio_supervisor.evaluate_now` once and confirm the dashboard card
-   still loads from `/rachio_supervisor/rachio-supervisor-zone-grid-card.js`.
+5. Call `rachio_supervisor.evaluate_now` once. This forces fresh Rachio
+   evidence, including webhook and optional photo-import evidence, then confirm
+   the dashboard card still loads from
+   `/rachio_supervisor/rachio-supervisor-zone-grid-card.js`.
 6. Pause the old cron automation after the integration is healthy and publishing
    catch-up decision state.
 

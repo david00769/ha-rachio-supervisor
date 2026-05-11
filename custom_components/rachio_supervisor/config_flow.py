@@ -87,6 +87,17 @@ def _submitted_field_value(
     return default
 
 
+def _selected_values_in_options(
+    values: Any,
+    options: list[tuple[str, str]],
+) -> list[str]:
+    """Return saved selector values that still exist in the current options."""
+    valid_values = {value for value, _label in options}
+    if not isinstance(values, list):
+        values = list(values or [])
+    return [value for value in values if isinstance(value, str) and value in valid_values]
+
+
 def _log_moisture_mapping_submission(
     schedule_entity_id: str,
     schedule_label: str,
@@ -234,14 +245,32 @@ def _policy_schema(
 ) -> vol.Schema:
     """Build the schedule policy schema."""
     defaults = defaults or {}
+    default_auto_catch_up = _selected_values_in_options(
+        defaults.get(
+            CONF_AUTO_CATCH_UP_SCHEDULES,
+            DEFAULT_AUTO_CATCH_UP_SCHEDULES,
+        ),
+        schedule_options,
+    )
+    default_auto_missed = _selected_values_in_options(
+        defaults.get(
+            CONF_AUTO_MISSED_RUN_SCHEDULES,
+            DEFAULT_AUTO_MISSED_RUN_SCHEDULES,
+        ),
+        schedule_options,
+    )
+    default_auto_moisture = _selected_values_in_options(
+        defaults.get(
+            CONF_AUTO_MOISTURE_WRITE_SCHEDULES,
+            DEFAULT_AUTO_MOISTURE_WRITE_SCHEDULES,
+        ),
+        schedule_options,
+    )
     return vol.Schema(
         {
             vol.Required(
                 CONF_AUTO_CATCH_UP_SCHEDULES,
-                default=defaults.get(
-                    CONF_AUTO_CATCH_UP_SCHEDULES,
-                    DEFAULT_AUTO_CATCH_UP_SCHEDULES,
-                ),
+                default=default_auto_catch_up,
             ): selector.SelectSelector(
                 selector.SelectSelectorConfig(
                     options=[
@@ -254,10 +283,7 @@ def _policy_schema(
             ),
             vol.Required(
                 CONF_AUTO_MISSED_RUN_SCHEDULES,
-                default=defaults.get(
-                    CONF_AUTO_MISSED_RUN_SCHEDULES,
-                    DEFAULT_AUTO_MISSED_RUN_SCHEDULES,
-                ),
+                default=default_auto_missed,
             ): selector.SelectSelector(
                 selector.SelectSelectorConfig(
                     options=[
@@ -270,10 +296,7 @@ def _policy_schema(
             ),
             vol.Required(
                 CONF_AUTO_MOISTURE_WRITE_SCHEDULES,
-                default=defaults.get(
-                    CONF_AUTO_MOISTURE_WRITE_SCHEDULES,
-                    DEFAULT_AUTO_MOISTURE_WRITE_SCHEDULES,
-                ),
+                default=default_auto_moisture,
             ): selector.SelectSelector(
                 selector.SelectSelectorConfig(
                     options=[
@@ -584,12 +607,16 @@ class RachioSupervisorOptionsFlow(config_entries.OptionsFlow):
             self._mapping_index += 1
             return await self.async_step_moisture_map()
 
-        default_value = existing_map.get(schedule_entity_id, UNMAPPED_SENTINEL)
         options = [selector.SelectOptionDict(value=UNMAPPED_SENTINEL, label="Unmapped")]
+        available_moisture_entities = set()
         for entity_id in moisture_candidates:
+            available_moisture_entities.add(entity_id)
             state = self.hass.states.get(entity_id)
             label = str(state.attributes.get("friendly_name")) if state else entity_id
             options.append(selector.SelectOptionDict(value=entity_id, label=label))
+        default_value = existing_map.get(schedule_entity_id, UNMAPPED_SENTINEL)
+        if default_value not in available_moisture_entities:
+            default_value = UNMAPPED_SENTINEL
         schema = vol.Schema(
             {
                 vol.Optional(
