@@ -77,6 +77,7 @@ async def _async_handle_evaluate_now(hass: HomeAssistant, call: ServiceCall) -> 
         raise HomeAssistantError("No Rachio Supervisor entries are loaded.")
 
     for coordinator in coordinators.values():
+        coordinator.force_next_reconciliation()
         await coordinator.async_request_refresh()
 
 

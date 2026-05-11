@@ -2095,6 +2095,10 @@ class RachioSupervisorCoordinator(DataUpdateCoordinator[SupervisorSnapshot]):
             return last_reconcile.date() < current.date()
         return False
 
+    def force_next_reconciliation(self) -> None:
+        """Make the next refresh rebuild Rachio evidence instead of using cache."""
+        self._last_reconciliation = None
+
     def _apply_health_transition(self, health_state: str, current: datetime) -> str:
         """Update degraded/healthy mode bookkeeping and return effective mode."""
         mode = "degraded" if health_state != "healthy" else "healthy"

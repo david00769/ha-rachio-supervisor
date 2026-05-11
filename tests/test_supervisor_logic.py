@@ -831,6 +831,7 @@ class FlowAlertClearTests(unittest.TestCase):
 class ServiceRegistrationTests(unittest.TestCase):
     def test_evaluate_now_service_handler_accepts_home_assistant_call_shape(self) -> None:
         refreshed: list[str] = []
+        forced: list[str] = []
 
         class _FakeServices:
             def __init__(self) -> None:
@@ -850,7 +851,10 @@ class ServiceRegistrationTests(unittest.TestCase):
             refreshed.append("called")
 
         services = _FakeServices()
-        coordinator = types.SimpleNamespace(async_request_refresh=_refresh)
+        coordinator = types.SimpleNamespace(
+            async_request_refresh=_refresh,
+            force_next_reconciliation=lambda: forced.append("called"),
+        )
         hass = types.SimpleNamespace(
             services=services,
             data={DOMAIN: {"entry-1": coordinator}},
@@ -861,6 +865,7 @@ class ServiceRegistrationTests(unittest.TestCase):
         asyncio.run(handler(types.SimpleNamespace(data={})))
 
         self.assertEqual(refreshed, ["called"])
+        self.assertEqual(forced, ["called"])
         remove()
         self.assertIn((DOMAIN, "evaluate_now"), services.removed)
 
