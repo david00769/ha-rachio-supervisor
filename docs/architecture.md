@@ -181,7 +181,7 @@ dashboard should load it through a Lovelace JavaScript module resource that
 points at the Home Assistant-served static file, preferably with the installed
 integration version as a query string:
 
-`/rachio_supervisor/rachio-supervisor-zone-grid-card.js?v=0.2.8`
+`/rachio_supervisor/rachio-supervisor-zone-grid-card.js?v=0.2.9`
 
 The query string is a cache-busting contract for HACS upgrades. Updating the
 custom integration package alone does not guarantee an already-open Lovelace

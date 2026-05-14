@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.2.9 - 2026-05-14
+
+- Clarified moisture review evidence when a mapped Home Assistant entity updates
+  to `unknown` or `unavailable`; those updates now read as unknown-state
+  check-ins instead of implying a fresh valid moisture report.
+
 ## 0.2.8 - 2026-05-14
 
 - Changed moisture badge and review copy from definitive `offline` language to

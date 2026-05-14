@@ -1800,6 +1800,15 @@ def moisture_last_check_in_label(schedule: ScheduleSnapshot) -> str:
         return "Last check-in: sensor not mapped"
     if not schedule.moisture_source_last_updated:
         return "Last check-in: not seen"
+    if (
+        schedule.moisture_observed_value in {None, STATE_UNAVAILABLE, STATE_UNKNOWN}
+        and str(schedule.moisture_source_state or "").lower()
+        in {STATE_UNKNOWN, STATE_UNAVAILABLE}
+    ):
+        return (
+            f"Last check-in: {schedule.moisture_source_state} state "
+            f"{_age_label(schedule.moisture_source_age_label)}"
+        )
     return f"Last check-in: {_age_label(schedule.moisture_source_age_label)}"
 
 

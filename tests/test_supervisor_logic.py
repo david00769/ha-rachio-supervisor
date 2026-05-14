@@ -1980,11 +1980,11 @@ class RuntimeHealthAndMoistureTests(unittest.TestCase):
         item = build_moisture_review_items((sleeping,))[0]
 
         self.assertEqual(item["posture_note"], "No recent sample")
-        self.assertEqual(item["last_check_in_label"], "Last check-in: 2d ago")
+        self.assertEqual(item["last_check_in_label"], "Last check-in: unknown state 2d ago")
         self.assertEqual(item["last_valid_moisture_label"], "Last valid: none")
         self.assertEqual(
             item["sensor_evidence_label"],
-            "Last check-in: 2d ago - Last valid: none",
+            "Last check-in: unknown state 2d ago - Last valid: none",
         )
         self.assertEqual(item["moisture_quality_label"], "No recent moisture sample")
         self.assertEqual(
