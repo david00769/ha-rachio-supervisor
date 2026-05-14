@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.2.10 - 2026-05-14
+
+- Widened zone status badge grid sizing so `no sample` moisture badges remain
+  readable on narrow mobile dashboards instead of truncating.
+
 ## 0.2.9 - 2026-05-14
 
 - Clarified moisture review evidence when a mapped Home Assistant entity updates

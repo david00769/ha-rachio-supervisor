@@ -4,7 +4,7 @@ from __future__ import annotations
 
 DOMAIN = "rachio_supervisor"
 TITLE = "Rachio Supervisor"
-VERSION = "0.2.9"
+VERSION = "0.2.10"
 RACHIO_DOMAIN = "rachio"
 CONF_CLOUDHOOK_URL = "cloudhook_url"
 CONF_WEBHOOK_ID = "webhook_id"

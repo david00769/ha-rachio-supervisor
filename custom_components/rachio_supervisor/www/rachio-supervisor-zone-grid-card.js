@@ -213,7 +213,7 @@ class RachioSupervisorZoneGridCard extends HTMLElement {
           }
           .badges {
             display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(92px, 1fr));
+            grid-template-columns: repeat(auto-fit, minmax(112px, 1fr));
           }
           .badge, .day {
             display: inline-flex;

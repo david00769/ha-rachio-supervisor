@@ -37,7 +37,7 @@ still keeping the default install observe-first:
   badges, editable Quick Run minutes, and confirmation-gated Quick Run actions
 - the dashboard card is a packaged Home Assistant resource, not pasted inline
   JavaScript; HACS installs should use a versioned Lovelace resource URL such
-  as `/rachio_supervisor/rachio-supervisor-zone-grid-card.js?v=0.2.9` so
+  as `/rachio_supervisor/rachio-supervisor-zone-grid-card.js?v=0.2.10` so
   browser and Lovelace caches pick up card updates cleanly
 - actual-rain diagnostics now include source status, reporting window,
   confidence, likely Home Assistant rain-source candidates, and a Rachio
@@ -310,7 +310,7 @@ It is aimed at the operational gap between:
 The recommended dashboard uses the packaged zone grid custom card. Add this
 Lovelace resource after installing the integration:
 
-- URL: `/rachio_supervisor/rachio-supervisor-zone-grid-card.js?v=0.2.9`
+- URL: `/rachio_supervisor/rachio-supervisor-zone-grid-card.js?v=0.2.10`
 - type: `JavaScript module`
 
 The unversioned path also works, but the versioned query is the recommended
@@ -467,7 +467,7 @@ Use this sequence when replacing a local cron supervisor:
 5. Call `rachio_supervisor.evaluate_now` once. This forces fresh Rachio
    evidence, including webhook and optional photo-import evidence, then confirm
    the dashboard card still loads from
-   `/rachio_supervisor/rachio-supervisor-zone-grid-card.js?v=0.2.9` or a newer
+   `/rachio_supervisor/rachio-supervisor-zone-grid-card.js?v=0.2.10` or a newer
    installed version query.
 6. Pause the old cron automation after the integration is healthy and publishing
    catch-up decision state.
@@ -480,7 +480,7 @@ Initial HACS packaging is in place via:
 - `hacs.json`
 - `custom_components/rachio_supervisor/manifest.json`
 
-Use `v0.2.9` or newer for HACS installs. That build includes the production
+Use `v0.2.10` or newer for HACS installs. That build includes the production
 dashboard cutover fixes, heat-assist outlook, stricter actual-rain source
 handling, schedule-rule zone matching, forced fresh evidence on
 `evaluate_now`, options-flow hardening,
