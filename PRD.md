@@ -432,6 +432,10 @@ v1 does not ship:
 The dashboard package should include:
 
 - photo-led zone grid with compact badges
+- Rachio zone photos cached locally for dashboard use; large originals should
+  be resized/compressed during import, while unsupported, undecodable, or
+  still-too-large images render as human-readable in-place image errors rather
+  than raw import status pills
 - editable, confirmation-gated per-zone Quick Run
 - a packaged Lovelace JavaScript module loaded from the Home Assistant-served
   static URL with an upgrade-safe version query
@@ -545,6 +549,9 @@ Initial success should be judged by:
   do not ship fake schedule-name placeholders
 - zone overview payload exposes image paths, zone ids, compact badges, quick-run
   defaults, and next-run hints so dashboards can be visual and zone-first
+- imported Rachio photos are locally cached and resized/compressed before
+  display; import failures use operator-readable image-area copy instead of
+  raw machine status labels
 - Lovelace resources use the packaged card URL, not a frozen inline JavaScript
   copy, and the docs explain the HACS redownload/restart/cache-bust path for
   card updates
