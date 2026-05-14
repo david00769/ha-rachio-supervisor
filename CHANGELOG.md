@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.2.6 - 2026-05-14
+
+- Clarified the app docs and PRD around HACS update behavior for the packaged
+  Lovelace card: use the Home Assistant-served module URL with a version query,
+  replace stale inline `data:text/javascript` resources, restart Home Assistant
+  after custom-component updates, and refresh open dashboard tabs.
+- Reworked the zone-grid Supervisor overlay so first-viewport data warnings use
+  operator-readable copy instead of raw internal tokens, and widened status
+  badges so icon/text labels do not collide on narrow cards.
+
 ## 0.2.5 - 2026-05-14
 
 - Added a first-class observed-rain source mode for Weather Underground / The

@@ -211,14 +211,19 @@ class RachioSupervisorZoneGridCard extends HTMLElement {
             align-items: center;
             flex-wrap: wrap;
           }
+          .badges {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(92px, 1fr));
+          }
           .badge, .day {
             display: inline-flex;
             gap: 6px;
             align-items: center;
             min-height: 28px;
+            min-width: 0;
             max-width: 100%;
             box-sizing: border-box;
-            padding: 4px 10px;
+            padding: 5px 12px;
             border-radius: 999px;
             background: var(--secondary-background-color, rgba(127,127,127,.14));
             color: var(--primary-text-color);
@@ -227,14 +232,15 @@ class RachioSupervisorZoneGridCard extends HTMLElement {
             white-space: nowrap;
           }
           .badges .badge {
-            min-width: 78px;
-            justify-content: center;
+            width: 100%;
+            min-width: 0;
+            justify-content: flex-start;
           }
           .photo-status .badge {
             background: rgba(0, 0, 0, .52);
             color: white;
             backdrop-filter: blur(6px);
-            min-width: 70px;
+            min-width: 86px;
             max-width: 100%;
             justify-content: center;
           }
@@ -242,11 +248,13 @@ class RachioSupervisorZoneGridCard extends HTMLElement {
             margin-left: auto;
           }
           .badge ha-icon {
-            flex: 0 0 16px;
-            width: 16px;
-            height: 16px;
+            --mdc-icon-size: 18px;
+            flex: 0 0 18px;
+            width: 18px;
+            height: 18px;
           }
           .badge-label {
+            flex: 1 1 auto;
             min-width: 0;
             overflow: hidden;
             text-overflow: ellipsis;
@@ -573,7 +581,7 @@ class RachioSupervisorZoneGridCard extends HTMLElement {
       pills.push(this._badge("mdi:pipe-leak", String(supervisor.flowCount), "issue", `Active flow alerts: ${supervisor.flowCount}`));
     }
     if (Array.isArray(supervisor.missingInputs) && supervisor.missingInputs.length && !supervisor.issue && !supervisor.unknown) {
-      pills.push(this._badge("mdi:database-alert-outline", String(supervisor.missingInputs.length), "warn", `Data warnings: ${supervisor.missingInputs.join(", ")}`));
+      pills.push(this._badge("mdi:database-alert-outline", String(supervisor.missingInputs.length), "warn", this._dataWarningDetail(supervisor.missingInputs)));
     }
     return `
       <div class="supervisor-pills">
@@ -590,7 +598,7 @@ class RachioSupervisorZoneGridCard extends HTMLElement {
       return "Supervisor entities are not reporting yet.";
     }
     if (Array.isArray(supervisor.missingInputs) && supervisor.missingInputs.length) {
-      return `Data warning: ${supervisor.missingInputs.join(", ")}`;
+      return this._dataWarningSummary(supervisor.missingInputs);
     }
     if (supervisor.flowCount > 0) {
       return "Flow alert review is active.";
@@ -602,6 +610,132 @@ class RachioSupervisorZoneGridCard extends HTMLElement {
       return supervisor.catchUpAction || supervisor.catchUpEvidence || `Catch-up review: ${supervisor.catchUpState}`;
     }
     return "";
+  }
+
+  _dataWarningSummary(inputs) {
+    const warnings = this._dataWarnings(inputs);
+    if (!warnings.length) {
+      return "";
+    }
+    if (warnings.length === 1) {
+      return warnings[0].summary;
+    }
+    return warnings.map((warning) => warning.short || warning.summary).join(" ");
+  }
+
+  _dataWarningDetail(inputs) {
+    const warnings = this._dataWarnings(inputs);
+    if (!warnings.length) {
+      return "Data warnings";
+    }
+    return `Data warnings: ${warnings.map((warning) => warning.detail || warning.summary).join(" ")}`;
+  }
+
+  _dataWarnings(inputs) {
+    const raw = Array.isArray(inputs) ? inputs : [];
+    const moistureProblems = [];
+    const otherWarnings = [];
+    raw.forEach((input) => {
+      const warning = String(input || "");
+      const moisture = this._parseMoistureWarning(warning);
+      if (moisture) {
+        moistureProblems.push(moisture);
+        return;
+      }
+      otherWarnings.push(this._humanDataWarning(warning));
+    });
+    const grouped = [];
+    if (moistureProblems.length) {
+      const zones = moistureProblems
+        .map((problem) => problem.zone)
+        .filter(Boolean);
+      const reasons = [...new Set(moistureProblems.map((problem) => problem.reason).filter(Boolean))];
+      const reason = reasons.length === 1 ? reasons[0] : "attention";
+      const action = this._moistureProblemAction(reason);
+      const count = zones.length || moistureProblems.length;
+      grouped.push({
+        short: `Moisture sensors need ${action} for ${count} ${count === 1 ? "zone" : "zones"}.`,
+        summary: count === 1 && zones[0]
+          ? `Moisture sensor for ${zones[0]} needs ${action}.`
+          : `Moisture sensors need ${action} for ${count} zones. Check Moisture review below.`,
+        detail: zones.length
+          ? `Moisture sensors need ${action}: ${this._formatList(zones)}.`
+          : `Moisture sensors need ${action}.`,
+      });
+    }
+    otherWarnings.forEach((warning) => {
+      if (warning) grouped.push(warning);
+    });
+    return grouped;
+  }
+
+  _parseMoistureWarning(warning) {
+    const prefix = "moisture_sensor_problem:";
+    if (!warning.startsWith(prefix)) {
+      return null;
+    }
+    const body = warning.slice(prefix.length);
+    const separator = body.lastIndexOf(":");
+    if (separator < 0) {
+      return { zone: body, reason: "attention" };
+    }
+    return {
+      zone: body.slice(0, separator),
+      reason: body.slice(separator + 1),
+    };
+  }
+
+  _humanDataWarning(warning) {
+    const labels = {
+      no_active_schedule_moisture_mappings: "No active moisture sensor mappings are configured.",
+      rain_actuals_unconfigured: "Observed rain source is not configured.",
+      rain_actuals_missing: "Configured observed rain sensor is missing.",
+      rain_actuals_unavailable: "Observed rain sensor is unavailable.",
+      rain_actuals_rate_only: "Observed rain source reports rate only, not a rainfall total.",
+      rain_actuals_weather_no_observed_precipitation: "Weather entity does not report observed rainfall.",
+      rain_actuals_non_numeric: "Observed rain source is not reporting a number.",
+      rain_actuals_weather_station_unconfigured: "Weather station source is not configured.",
+      rain_actuals_weather_station_invalid: "Weather station ID is invalid.",
+      rain_actuals_weather_station_api_key_missing: "Weather station API key is missing.",
+      rain_actuals_weather_station_unavailable: "Weather station rainfall is unavailable.",
+      rain_actuals_weather_station_precip_total_missing: "Weather station is not reporting a rainfall total.",
+    };
+    const label = labels[warning] || this._titleCase(warning.replaceAll("_", " "));
+    return {
+      short: label,
+      summary: label,
+      detail: label,
+    };
+  }
+
+  _moistureProblemAction(reason) {
+    const labels = {
+      missing_sensor: "a mapped sensor",
+      expired_sample: "a fresh check-in",
+      stale_sample: "recent samples",
+      sensor_sleeping_or_offline: "a fresh check-in",
+      non_numeric_state: "numeric readings",
+      boundary_value_needs_calibration: "calibration review",
+      missing_companion_health_data: "sensor health context",
+      attention: "attention",
+    };
+    return labels[reason] || this._titleCase(reason.replaceAll("_", " ")).toLowerCase();
+  }
+
+  _formatList(items) {
+    const unique = [...new Set(items.filter(Boolean))];
+    if (unique.length <= 2) {
+      return unique.join(" and ");
+    }
+    return `${unique.slice(0, -1).join(", ")}, and ${unique[unique.length - 1]}`;
+  }
+
+  _titleCase(value) {
+    return String(value || "")
+      .split(" ")
+      .filter(Boolean)
+      .map((part) => `${part.charAt(0).toUpperCase()}${part.slice(1)}`)
+      .join(" ");
   }
 
   _zoneTemplate(zone, index) {

@@ -79,7 +79,9 @@ window so the dashboard does not pretend every source is rolling 24h.
 Weather Underground / The Weather Company PWS data fits this model when it is
 first exposed as a Home Assistant sensor, for example by a REST or custom
 integration. The supervisor consumes the resulting observed-rain entity; it
-does not ship a Weather Underground API key.
+does not ship a bundled Weather Underground API key. If Home Assistant owns the
+REST/custom sensor, the key should stay in Home Assistant secrets and the
+supervisor should consume only the resulting numeric observed-rain entity.
 
 The supervisor can also own a user-configured Weather Underground PWS override:
 the operator selects the PWS source mode, enters a station ID and API key, and
@@ -171,6 +173,32 @@ resolution order: optional local override, optional cached Rachio import, then
 the packaged placeholder. Rachio photo import is read-only and opt-in.
 
 Automatic catch-up and moisture write-back remain separate policy paths.
+
+## Lovelace resource boundary
+
+The packaged zone grid card is part of the integration distribution. The
+dashboard should load it through a Lovelace JavaScript module resource that
+points at the Home Assistant-served static file, preferably with the installed
+integration version as a query string:
+
+`/rachio_supervisor/rachio-supervisor-zone-grid-card.js?v=0.2.6`
+
+The query string is a cache-busting contract for HACS upgrades. Updating the
+custom integration package alone does not guarantee an already-open Lovelace
+session has reloaded the card module. Upgrade guidance should therefore include
+the normal sequence:
+
+1. update or redownload the custom integration in HACS
+2. restart Home Assistant so the new Python and static assets are served
+3. ensure the Lovelace resource points at the packaged module URL with the
+   installed version query
+4. refresh any already-open dashboard tab
+
+Inline `data:text/javascript` Lovelace resources are not a supported production
+path. They bypass the packaged static asset and can leave the dashboard pinned
+to old card behavior even when the integration itself has updated.
+
+## Automatic action boundary
 
 Automatic catch-up is only for schedules explicitly selected in the schedule
 policy step. While `observe_first` is enabled, the supervisor publishes the

@@ -53,7 +53,7 @@
           </div>
           <div>
             <h3>Observed actuals</h3>
-            <p>Use Home Assistant rainfall and optional moisture sensors to judge the real outcome.</p>
+            <p>Use Home Assistant rainfall, an explicit PWS station override, and optional moisture sensors to judge the real outcome.</p>
           </div>
           <div>
             <h3>Operator trust</h3>
@@ -145,7 +145,9 @@
           <p>
             The current runtime exposes a photo-led zone grid, manual Quick Run,
             evidence reconciliation, moisture review, flow-alert review, and
-            dashboard-assisted sensor calibration inside Home Assistant.
+            dashboard-assisted sensor calibration inside Home Assistant. HACS
+            installs load the card as a versioned Lovelace module, not as
+            pasted inline JavaScript.
           </p>
         </div>
         <div class="cta-actions">

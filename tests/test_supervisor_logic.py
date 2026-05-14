@@ -2697,6 +2697,8 @@ class RuntimeHealthAndMoistureTests(unittest.TestCase):
         self.assertIn("Supervisor needs review", source)
         self.assertIn("Supervisor not ready", source)
         self.assertIn("Data warnings", source)
+        self.assertIn("_dataWarningSummary", source)
+        self.assertIn("Moisture sensors need", source)
         self.assertIn("_photoBadge", source)
         self.assertIn("_photoErrorLabel", source)
         self.assertIn("image too large", source)

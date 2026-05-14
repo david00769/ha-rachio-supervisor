@@ -35,6 +35,10 @@ still keeping the default install observe-first:
   `/rachio_supervisor/rachio-supervisor-zone-grid-card.js`; this is the
   recommended zone-first dashboard surface and renders zone photos, compact
   badges, editable Quick Run minutes, and confirmation-gated Quick Run actions
+- the dashboard card is a packaged Home Assistant resource, not pasted inline
+  JavaScript; HACS installs should use a versioned Lovelace resource URL such
+  as `/rachio_supervisor/rachio-supervisor-zone-grid-card.js?v=0.2.6` so
+  browser and Lovelace caches pick up card updates cleanly
 - actual-rain diagnostics now include source status, reporting window,
   confidence, likely Home Assistant rain-source candidates, and a Rachio
   weather-source probe that is diagnostic-only
@@ -274,7 +278,9 @@ moisture-sensor choices.
 - v1 defaults to `observe-first`.
 - automatic behavior is `per-zone opt-in`.
 - moisture support is `generic Home Assistant sensor input`.
-- actual rainfall comes from `user-selected Home Assistant rainfall entities`.
+- actual rainfall comes from `user-selected observed-rain sources`: either a
+  Home Assistant rainfall entity or an explicit Weather Underground / The
+  Weather Company PWS station override.
 - Rachio-observed rain from skip events is also surfaced separately because it
   is often the most useful parity signal for irrigation review.
 
@@ -304,8 +310,18 @@ It is aimed at the operational gap between:
 The recommended dashboard uses the packaged zone grid custom card. Add this
 Lovelace resource after installing the integration:
 
-- URL: `/rachio_supervisor/rachio-supervisor-zone-grid-card.js`
+- URL: `/rachio_supervisor/rachio-supervisor-zone-grid-card.js?v=0.2.6`
 - type: `JavaScript module`
+
+The unversioned path also works, but the versioned query is the recommended
+HACS path because Home Assistant and browsers may keep an older module loaded
+after an integration update. When upgrading the integration, update or
+redownload the custom component in HACS, restart Home Assistant, then bump the
+resource query to the installed version if Lovelace still serves an older card.
+
+Do not paste the card as an inline `data:text/javascript` Lovelace resource.
+If an older dashboard used an inline copy, replace that resource with the
+packaged module URL above so future HACS updates can take effect.
 
 The example dashboard then uses:
 
@@ -451,7 +467,8 @@ Use this sequence when replacing a local cron supervisor:
 5. Call `rachio_supervisor.evaluate_now` once. This forces fresh Rachio
    evidence, including webhook and optional photo-import evidence, then confirm
    the dashboard card still loads from
-   `/rachio_supervisor/rachio-supervisor-zone-grid-card.js`.
+   `/rachio_supervisor/rachio-supervisor-zone-grid-card.js?v=0.2.6` or a newer
+   installed version query.
 6. Pause the old cron automation after the integration is healthy and publishing
    catch-up decision state.
 
@@ -463,7 +480,7 @@ Initial HACS packaging is in place via:
 - `hacs.json`
 - `custom_components/rachio_supervisor/manifest.json`
 
-Use `v0.2.5` or newer for HACS installs. That build includes the production
+Use `v0.2.6` or newer for HACS installs. That build includes the production
 dashboard cutover fixes, heat-assist outlook, stricter actual-rain source
 handling, schedule-rule zone matching, forced fresh evidence on
 `evaluate_now`, options-flow hardening,

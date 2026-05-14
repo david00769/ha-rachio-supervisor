@@ -141,11 +141,22 @@ detail stays below the operator controls.
 The integration ships the `rachio-supervisor-zone-grid-card` Lovelace module
 for this purpose. Add this dashboard resource:
 
-`/rachio_supervisor/rachio-supervisor-zone-grid-card.js`
+`/rachio_supervisor/rachio-supervisor-zone-grid-card.js?v=0.2.6`
 
 Resource type:
 
 `JavaScript module`
+
+Use the installed integration version in the query string. The query is not
+required by the static route, but it is the intended HACS cache-busting
+contract. If Home Assistant still serves an old card after an update, redownload
+or update the custom integration in HACS, restart Home Assistant, and bump the
+resource query to the installed version.
+
+Do not keep an inline `data:text/javascript` copy of the card in Lovelace
+resources. Inline copies freeze the card at the pasted source and can make the
+live dashboard look like an old shadow page even after the integration package
+has been updated.
 
 Then use:
 
@@ -611,7 +622,8 @@ gate before pausing the cron runner:
 1. Reload the custom integration and confirm `Health`, `Webhook health`, `Last
    reconciliation`, `Catch-up evidence`, and `Last catch-up decision` are fresh.
 2. Confirm the zone grid card loads from
-   `/rachio_supervisor/rachio-supervisor-zone-grid-card.js`.
+   `/rachio_supervisor/rachio-supervisor-zone-grid-card.js?v=<installed-version>`
+   and that Lovelace is not using an inline `data:text/javascript` copy.
 3. Select only reviewed schedules for automatic catch-up.
 4. Disable `observe_first` only after the selected schedules resolve to the
    intended zone entities.

@@ -229,7 +229,8 @@ Target flow shape:
 
 1. choose an existing Rachio integration / controller context
 2. choose or confirm a site label
-3. choose actual-rain entity or entities
+3. choose an observed-rain source: a Home Assistant entity or an explicit
+   Weather Underground / The Weather Company PWS station override
 4. select operating mode
 5. optionally map one moisture sensor per zone
 6. set per-zone thresholds and action posture
@@ -243,7 +244,7 @@ Planned first-class entities:
 
 - supervisor health
 - webhook/API freshness
-- actual rain window totals
+- actual rain window totals, source mode, source label, and observed timestamp
 - last run
 - last skip
 - last reconciliation
@@ -432,10 +433,23 @@ The dashboard package should include:
 
 - photo-led zone grid with compact badges
 - editable, confirmation-gated per-zone Quick Run
+- a packaged Lovelace JavaScript module loaded from the Home Assistant-served
+  static URL with an upgrade-safe version query
 - current site status in Audit and as zone/weather/moisture/flow badges
 - moisture + rain context
 - simple dashboard-assisted moisture sensor calibration
 - review queue / actions
+
+Dashboard resource contract:
+
+- the custom card must be served by the integration, not pasted into Lovelace
+  as an inline `data:text/javascript` resource
+- public docs should recommend a versioned resource URL such as
+  `/rachio_supervisor/rachio-supervisor-zone-grid-card.js?v=<installed-version>`
+  so HACS updates can bust browser and Lovelace module caches
+- upgrade guidance must include the operational path: update/redownload the
+  custom integration in HACS, restart Home Assistant, verify the Lovelace
+  resource URL, and refresh already-open dashboard tabs
 
 ### Public docs site
 
@@ -531,6 +545,9 @@ Initial success should be judged by:
   do not ship fake schedule-name placeholders
 - zone overview payload exposes image paths, zone ids, compact badges, quick-run
   defaults, and next-run hints so dashboards can be visual and zone-first
+- Lovelace resources use the packaged card URL, not a frozen inline JavaScript
+  copy, and the docs explain the HACS redownload/restart/cache-bust path for
+  card updates
 - per-zone Quick Run calls the existing Home Assistant Rachio watering service
   only after an explicit operator action
 - missing or noisy moisture entities degrade gracefully
