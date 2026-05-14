@@ -141,7 +141,7 @@ detail stays below the operator controls.
 The integration ships the `rachio-supervisor-zone-grid-card` Lovelace module
 for this purpose. Add this dashboard resource:
 
-`/rachio_supervisor/rachio-supervisor-zone-grid-card.js?v=0.2.10`
+`/rachio_supervisor/rachio-supervisor-zone-grid-card.js?v=0.2.11`
 
 Resource type:
 

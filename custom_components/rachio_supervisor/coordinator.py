@@ -1615,7 +1615,13 @@ def apply_moisture_mapping(
             recommended_action = "resolve_write_back"
         elif moisture_entity_id is None:
             recommended_action = "map_moisture_sensor"
-        elif evidence.quality_note == "missing_sensor":
+        elif evidence.quality_note in {
+            "missing_sensor",
+            "expired_sample",
+            "stale_sample",
+            "sensor_sleeping_or_offline",
+            "non_numeric_state",
+        } and not write_allowed:
             recommended_action = "repair_moisture_sensor"
         elif evidence.quality_note == "boundary_value_needs_calibration":
             recommended_action = "calibrate_moisture_sensor"

@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.2.11 - 2026-05-14
+
+- Treat mapped moisture sensors with expired, stale, unknown, unavailable, or
+  nonnumeric evidence as repair-review items instead of clearing them as "no
+  write needed" when there is no usable value to write.
+
 ## 0.2.10 - 2026-05-14
 
 - Widened zone status badge grid sizing so `no sample` moisture badges remain

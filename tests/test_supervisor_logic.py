@@ -2868,6 +2868,34 @@ class RuntimeHealthAndMoistureTests(unittest.TestCase):
                 self.assertEqual(mapped.recommended_action, "repair_moisture_sensor")
                 self.assertIsNone(mapped.write_value)
 
+    def test_unknown_expired_moisture_requires_repair_review(self) -> None:
+        current = datetime.fromisoformat("2026-05-10T12:00:00+00:00")
+        state = SimpleNamespace(
+            entity_id="sensor.pots_moisture",
+            state="unknown",
+            attributes={},
+            last_updated=current,
+        )
+
+        mapped = apply_moisture_mapping(
+            self._hass_with_states({"sensor.pots_moisture": state}),
+            (self._moisture_schedule(),),
+            {"switch.schedule_pots": "sensor.pots_moisture"},
+            set(),
+            {"switch.schedule_pots"},
+            {},
+            True,
+            {},
+            current,
+        )[0]
+
+        self.assertEqual(mapped.moisture_freshness, "expired")
+        self.assertEqual(mapped.moisture_quality_note, "expired_sample")
+        self.assertIn("sensor_sleeping_or_offline", mapped.moisture_quality_flags)
+        self.assertEqual(mapped.recommended_action, "repair_moisture_sensor")
+        self.assertEqual(mapped.review_state, "pending_review")
+        self.assertIsNone(mapped.write_value)
+
     def test_boundary_moisture_blocks_recommendation_and_auto_write(self) -> None:
         cache: dict[str, MoistureEvidenceCacheEntry] = {}
         schedule = self._moisture_schedule()
