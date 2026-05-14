@@ -37,7 +37,7 @@ still keeping the default install observe-first:
   badges, editable Quick Run minutes, and confirmation-gated Quick Run actions
 - the dashboard card is a packaged Home Assistant resource, not pasted inline
   JavaScript; HACS installs should use a versioned Lovelace resource URL such
-  as `/rachio_supervisor/rachio-supervisor-zone-grid-card.js?v=0.2.6` so
+  as `/rachio_supervisor/rachio-supervisor-zone-grid-card.js?v=0.2.7` so
   browser and Lovelace caches pick up card updates cleanly
 - actual-rain diagnostics now include source status, reporting window,
   confidence, likely Home Assistant rain-source candidates, and a Rachio
@@ -310,7 +310,7 @@ It is aimed at the operational gap between:
 The recommended dashboard uses the packaged zone grid custom card. Add this
 Lovelace resource after installing the integration:
 
-- URL: `/rachio_supervisor/rachio-supervisor-zone-grid-card.js?v=0.2.6`
+- URL: `/rachio_supervisor/rachio-supervisor-zone-grid-card.js?v=0.2.7`
 - type: `JavaScript module`
 
 The unversioned path also works, but the versioned query is the recommended
@@ -467,7 +467,7 @@ Use this sequence when replacing a local cron supervisor:
 5. Call `rachio_supervisor.evaluate_now` once. This forces fresh Rachio
    evidence, including webhook and optional photo-import evidence, then confirm
    the dashboard card still loads from
-   `/rachio_supervisor/rachio-supervisor-zone-grid-card.js?v=0.2.6` or a newer
+   `/rachio_supervisor/rachio-supervisor-zone-grid-card.js?v=0.2.7` or a newer
    installed version query.
 6. Pause the old cron automation after the integration is healthy and publishing
    catch-up decision state.
@@ -480,7 +480,7 @@ Initial HACS packaging is in place via:
 - `hacs.json`
 - `custom_components/rachio_supervisor/manifest.json`
 
-Use `v0.2.6` or newer for HACS installs. That build includes the production
+Use `v0.2.7` or newer for HACS installs. That build includes the production
 dashboard cutover fixes, heat-assist outlook, stricter actual-rain source
 handling, schedule-rule zone matching, forced fresh evidence on
 `evaluate_now`, options-flow hardening,
@@ -491,9 +491,11 @@ observed-rain sourcing.
 ## Known limitations
 
 - Rachio `imageUrl` may be absent for some zones or accounts.
-- Very large Rachio original images are rejected instead of hotlinked.
-- The card hides rejected images and shows the operator-facing reason in the
-  image area, such as `image too large`.
+- Large Rachio original images are resized and compressed during import before
+  being cached for the dashboard.
+- Extremely large, unsupported, or undecodable images are still rejected. The
+  card hides rejected images and shows the operator-facing reason in the image
+  area, such as `image too large`.
 - Photo import is opt-in and read-only.
 - Manual local photo overrides always win over imported Rachio photos.
 - Unresolved Rachio zones fall back to the packaged placeholder.

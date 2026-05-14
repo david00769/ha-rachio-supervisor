@@ -141,7 +141,7 @@ detail stays below the operator controls.
 The integration ships the `rachio-supervisor-zone-grid-card` Lovelace module
 for this purpose. Add this dashboard resource:
 
-`/rachio_supervisor/rachio-supervisor-zone-grid-card.js?v=0.2.6`
+`/rachio_supervisor/rachio-supervisor-zone-grid-card.js?v=0.2.7`
 
 Resource type:
 
@@ -273,7 +273,10 @@ operators can confirm import behavior without inspecting each zone item.
 Known photo limits:
 
 - Rachio `imageUrl` may be absent for some zones.
-- Very large Rachio originals are rejected rather than hotlinked.
+- Large Rachio originals are resized and compressed during import before being
+  cached for the dashboard.
+- Extremely large, unsupported, or undecodable originals are rejected rather
+  than hotlinked.
 - Rejected or failed photo imports should render as an in-place image error,
   such as `image too large`, not as a raw `rejected` status pill.
 - Photo import is opt-in and read-only.

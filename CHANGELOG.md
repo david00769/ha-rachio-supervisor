@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.2.7 - 2026-05-14
+
+- Changed Rachio zone-photo import so large source images can be downloaded up
+  to a larger safety cap, resized/compressed into dashboard JPEGs, and cached
+  instead of being rejected only because the original file is over 8 MB.
+- Kept a hard source cap and explicit rejection states for unsupported,
+  undecodable, or still-too-large images.
+
 ## 0.2.6 - 2026-05-14
 
 - Clarified the app docs and PRD around HACS update behavior for the packaged

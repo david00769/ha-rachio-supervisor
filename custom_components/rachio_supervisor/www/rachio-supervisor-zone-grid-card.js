@@ -1148,6 +1148,9 @@ class RachioSupervisorZoneGridCard extends HTMLElement {
     const status = zone.photo_import_status || "";
     const reason = zone.photo_import_reason || "";
     if (status === "rejected" && reason === "image_too_large") return "image too large";
+    if (status === "rejected" && reason === "resized_image_too_large") return "image too large";
+    if (status === "rejected" && reason === "pillow_unavailable_for_resize") return "resize unavailable";
+    if (status === "rejected" && reason.startsWith("image_decode_failed")) return "image unreadable";
     if (status === "rejected" && reason.startsWith("unsupported_content_type")) return "unsupported image";
     if (status === "rejected") return "image unavailable";
     if (status === "failed") return "image unavailable";
@@ -1157,8 +1160,14 @@ class RachioSupervisorZoneGridCard extends HTMLElement {
   _photoTitle(zone) {
     const status = zone.photo_import_status || "unknown";
     const reason = zone.photo_import_reason || "";
-    if (status === "rejected" && reason === "image_too_large") {
-      return "Rachio photo is larger than the dashboard import limit, so the card hides the image. Add a local zone photo to replace it.";
+    if (status === "rejected" && ["image_too_large", "resized_image_too_large"].includes(reason)) {
+      return "Rachio photo is larger than the dashboard import limit after resizing, so the card hides the image. Add a local zone photo to replace it.";
+    }
+    if (status === "rejected" && reason === "pillow_unavailable_for_resize") {
+      return "Rachio photo needs resizing, but the Home Assistant image library is unavailable. Add a local zone photo to replace it.";
+    }
+    if (status === "rejected" && reason.startsWith("image_decode_failed")) {
+      return "Rachio photo could not be decoded, so the card hides the image. Add a local zone photo to replace it.";
     }
     if (status === "rejected" && reason.startsWith("unsupported_content_type")) {
       return "Rachio photo is not a supported image type, so the card hides the image. Add a local zone photo to replace it.";

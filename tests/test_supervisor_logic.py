@@ -636,7 +636,7 @@ class ZonePhotoImportTests(unittest.TestCase):
         self.assertEqual(schedule.photo_import_status, "missing")
         self.assertEqual(schedule.photo_import_reason, "config_path_unavailable")
 
-    def test_rejects_bad_content_type_and_oversized_image(self) -> None:
+    def test_rejects_bad_type_and_source_over_import_limit(self) -> None:
         client = self._client()
         with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)
@@ -651,15 +651,12 @@ class ZonePhotoImportTests(unittest.TestCase):
                     config_path=lambda *parts: str(root.joinpath(*parts)),
                     import_enabled=True,
                 )
-            with patch.object(
-                photo_import.urllib.request,
-                "urlopen",
-                return_value=_ImageResponse(
-                    b"",
-                    content_type="image/jpeg",
-                    content_length=photo_import.MAX_IMAGE_BYTES + 1,
-                ),
-            ):
+            response = _ImageResponse(
+                b"",
+                content_type="image/jpeg",
+                content_length=photo_import.MAX_SOURCE_IMAGE_BYTES + 1,
+            )
+            with patch.object(photo_import.urllib.request, "urlopen", return_value=response):
                 oversized = photo_import.import_rachio_zone_photo(
                     client=client,
                     zone_id="zone-2",
@@ -672,18 +669,45 @@ class ZonePhotoImportTests(unittest.TestCase):
         self.assertEqual(oversized.status, "rejected")
         self.assertEqual(oversized.reason, "image_too_large")
 
-    def test_rejects_oversized_image_without_content_length_after_capped_read(self) -> None:
+    def test_imports_source_over_dashboard_cache_limit_when_resizable(self) -> None:
         client = self._client()
-        oversized_payload = b"x" * (photo_import.MAX_IMAGE_BYTES + 1)
         with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)
-            with patch.object(
-                photo_import.urllib.request,
-                "urlopen",
-                return_value=_ImageResponse(
-                    oversized_payload,
-                    content_type="image/jpeg",
-                    include_content_length=False,
+            with (
+                patch.dict(sys.modules, {"PIL": None}),
+                patch.object(
+                    photo_import.urllib.request,
+                    "urlopen",
+                    return_value=_ImageResponse(
+                        b"\xff\xd8fake-jpeg\xff\xd9",
+                        content_type="image/jpeg",
+                        content_length=photo_import.MAX_IMAGE_BYTES + 1,
+                    ),
+                ),
+            ):
+                result = photo_import.import_rachio_zone_photo(
+                    client=client,
+                    zone_id="zone-1",
+                    config_path=lambda *parts: str(root.joinpath(*parts)),
+                    import_enabled=True,
+                )
+
+        self.assertEqual(result.status, "imported")
+
+    def test_rejects_source_without_content_length_after_capped_read(self) -> None:
+        client = self._client()
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            with (
+                patch.object(photo_import, "MAX_SOURCE_IMAGE_BYTES", 16),
+                patch.object(
+                    photo_import.urllib.request,
+                    "urlopen",
+                    return_value=_ImageResponse(
+                        b"x" * 17,
+                        content_type="image/jpeg",
+                        include_content_length=False,
+                    ),
                 ),
             ):
                 result = photo_import.import_rachio_zone_photo(

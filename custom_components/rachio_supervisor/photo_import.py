@@ -10,8 +10,11 @@ import urllib.error
 import urllib.request
 
 MAX_IMAGE_BYTES = 8 * 1024 * 1024
+MAX_SOURCE_IMAGE_BYTES = 32 * 1024 * 1024
 PHOTO_TIMEOUT_SECONDS = 20
 PHOTO_MAX_WIDTH = 960
+PHOTO_MAX_HEIGHT = 720
+PHOTO_JPEG_QUALITIES = (82, 76, 68)
 ALLOWED_CONTENT_TYPES = {
     "image/jpeg",
     "image/jpg",
@@ -108,12 +111,12 @@ def _download_image(image_url: str) -> tuple[bytes, str]:
             if content_type not in ALLOWED_CONTENT_TYPES:
                 raise ValueError(f"unsupported_content_type:{content_type or 'missing'}")
             content_length = _content_length(response.headers.get("content-length"))
-            if content_length is not None and content_length > MAX_IMAGE_BYTES:
+            if content_length is not None and content_length > MAX_SOURCE_IMAGE_BYTES:
                 raise ValueError("image_too_large")
-            payload = response.read(MAX_IMAGE_BYTES + 1)
+            payload = response.read(MAX_SOURCE_IMAGE_BYTES + 1)
     except urllib.error.URLError as err:
         raise ValueError(f"download_failed:{err}") from err
-    if len(payload) > MAX_IMAGE_BYTES:
+    if len(payload) > MAX_SOURCE_IMAGE_BYTES:
         raise ValueError("image_too_large")
     if not payload:
         raise ValueError("empty_image")
@@ -132,20 +135,30 @@ def _content_length(value: str | None) -> int | None:
 def _resize_to_dashboard_jpeg(payload: bytes, content_type: str) -> bytes:
     try:
         from PIL import Image
+        from PIL import ImageOps
     except ModuleNotFoundError:
-        if content_type in {"image/jpeg", "image/jpg"}:
+        if content_type in {"image/jpeg", "image/jpg"} and len(payload) <= MAX_IMAGE_BYTES:
             return payload
-        raise ValueError("pillow_unavailable_for_non_jpeg") from None
+        raise ValueError("pillow_unavailable_for_resize") from None
 
-    with Image.open(BytesIO(payload)) as image:
-        image = image.convert("RGB")
-        if image.width > PHOTO_MAX_WIDTH:
-            ratio = PHOTO_MAX_WIDTH / image.width
-            height = max(1, int(image.height * ratio))
-            image = image.resize((PHOTO_MAX_WIDTH, height))
-        output = BytesIO()
-        image.save(output, format="JPEG", quality=82, optimize=True)
-        return output.getvalue()
+    try:
+        with Image.open(BytesIO(payload)) as image:
+            image = ImageOps.exif_transpose(image).convert("RGB")
+            if image.width > PHOTO_MAX_WIDTH or image.height > PHOTO_MAX_HEIGHT:
+                resample = getattr(getattr(Image, "Resampling", Image), "LANCZOS")
+                image.thumbnail((PHOTO_MAX_WIDTH, PHOTO_MAX_HEIGHT), resample=resample)
+            last_payload = b""
+            for quality in PHOTO_JPEG_QUALITIES:
+                output = BytesIO()
+                image.save(output, format="JPEG", quality=quality, optimize=True)
+                last_payload = output.getvalue()
+                if len(last_payload) <= MAX_IMAGE_BYTES:
+                    return last_payload
+            raise ValueError("resized_image_too_large")
+    except ValueError:
+        raise
+    except Exception as err:  # noqa: BLE001 - image codecs raise several exception types
+        raise ValueError(f"image_decode_failed:{type(err).__name__}") from err
 
 
 def _atomic_write(path: Path, payload: bytes) -> None:
