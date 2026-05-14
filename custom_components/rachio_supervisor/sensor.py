@@ -196,7 +196,7 @@ DESCRIPTIONS = (
         key="rain_actuals_source",
         translation_key="rain_actuals_source",
         entity_category=EntityCategory.DIAGNOSTIC,
-        value_fn=lambda data: data.rain_actuals_entity or "unconfigured",
+        value_fn=lambda data: data.rain_source_label or data.rain_actuals_entity or "unconfigured",
     ),
     RachioSupervisorSensorDescription(
         key="actual_rain_24h",
@@ -441,7 +441,10 @@ class RachioSupervisorSensor(RachioSupervisorEntity, SensorEntity):
                 "reason": data.rain_actuals_reason,
                 "window": data.rain_actuals_window,
                 "confidence": data.rain_actuals_confidence,
+                "source_mode": data.rain_source_mode,
+                "source_label": data.rain_source_label,
                 "source_entity": data.rain_actuals_entity,
+                "source_observed_at": data.rain_source_observed_at,
                 "candidate_sources": list(data.rain_source_candidates),
                 "rachio_weather_probe": data.rachio_weather_probe,
             }

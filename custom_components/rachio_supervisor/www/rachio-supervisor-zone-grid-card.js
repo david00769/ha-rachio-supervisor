@@ -147,6 +147,27 @@ class RachioSupervisorZoneGridCard extends HTMLElement {
           .photo img[hidden] {
             display: none;
           }
+          .photo-error {
+            position: relative;
+            z-index: 1;
+            height: 168px;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            gap: 6px;
+            color: white;
+            text-align: center;
+            font-size: .92rem;
+            font-weight: 700;
+            text-transform: lowercase;
+            text-shadow: 0 1px 2px rgba(0,0,0,.48);
+          }
+          .photo-error ha-icon {
+            width: 26px;
+            height: 26px;
+            opacity: .92;
+          }
           .shade {
             position: absolute;
             inset: 0;
@@ -173,7 +194,7 @@ class RachioSupervisorZoneGridCard extends HTMLElement {
             top: 10px;
             z-index: 3;
             display: flex;
-            justify-content: space-between;
+            justify-content: flex-start;
             gap: 8px;
             align-items: flex-start;
             flex-wrap: wrap;
@@ -192,28 +213,43 @@ class RachioSupervisorZoneGridCard extends HTMLElement {
           }
           .badge, .day {
             display: inline-flex;
-            gap: 5px;
+            gap: 6px;
             align-items: center;
-            min-height: 24px;
-            padding: 2px 8px;
+            min-height: 28px;
+            max-width: 100%;
+            box-sizing: border-box;
+            padding: 4px 10px;
             border-radius: 999px;
             background: var(--secondary-background-color, rgba(127,127,127,.14));
             color: var(--primary-text-color);
-            font-size: .78rem;
-            line-height: 1;
+            font-size: .8rem;
+            line-height: 1.1;
             white-space: nowrap;
+          }
+          .badges .badge {
+            min-width: 78px;
+            justify-content: center;
           }
           .photo-status .badge {
             background: rgba(0, 0, 0, .52);
             color: white;
             backdrop-filter: blur(6px);
+            min-width: 70px;
             max-width: 100%;
-            white-space: normal;
-            line-height: 1.15;
+            justify-content: center;
+          }
+          .photo-status .badge.photo-diagnostic {
+            margin-left: auto;
           }
           .badge ha-icon {
+            flex: 0 0 16px;
             width: 16px;
             height: 16px;
+          }
+          .badge-label {
+            min-width: 0;
+            overflow: hidden;
+            text-overflow: ellipsis;
           }
           .badge.warn {
             color: var(--warning-color, #f7c948);
@@ -574,11 +610,12 @@ class RachioSupervisorZoneGridCard extends HTMLElement {
     const canRun = Boolean(zone.zone_entity_id || zone.schedule_entity_id || zone.schedule_name);
     const imagePath = zone.image_path || zone.fallback_image_path || "";
     const fallbackPath = zone.fallback_image_path || "";
+    const photoError = this._photoErrorLabel(zone);
     const calibration = this._calibrationState(zone);
     return `
       <section class="zone">
         <div class="photo">
-          <img src="${this._escapeAttr(imagePath)}" data-fallback="${this._escapeAttr(fallbackPath)}" alt="${this._escapeAttr(zone.zone_name || "Rachio zone")}">
+          ${photoError ? this._photoErrorTemplate(zone, photoError) : `<img src="${this._escapeAttr(imagePath)}" data-fallback="${this._escapeAttr(fallbackPath)}" alt="${this._escapeAttr(zone.zone_name || "Rachio zone")}">`}
           <div class="shade"></div>
           <div class="photo-status">
             ${this._badge(zone.water_icon || "mdi:calendar-clock", zone.water_badge || "watch", this._waterTone(zone))}
@@ -759,7 +796,8 @@ class RachioSupervisorZoneGridCard extends HTMLElement {
 
   _badge(icon, label, tone, title) {
     const safeTitle = this._escapeAttr(title || label);
-    return `<span class="badge ${tone}" title="${safeTitle}" aria-label="${safeTitle}"><ha-icon icon="${this._escapeAttr(icon)}"></ha-icon>${this._escape(label)}</span>`;
+    const toneClass = tone ? ` ${this._escapeAttr(tone)}` : "";
+    return `<span class="badge${toneClass}" title="${safeTitle}" aria-label="${safeTitle}"><ha-icon icon="${this._escapeAttr(icon)}"></ha-icon><span class="badge-label">${this._escape(label)}</span></span>`;
   }
 
   _calibrationTemplate(zone, index, calibration = null) {
@@ -950,21 +988,51 @@ class RachioSupervisorZoneGridCard extends HTMLElement {
       return "";
     }
     if (status === "missing") {
-      return this._badge("mdi:image-off-outline", "No photo", "muted", this._photoTitle(zone));
-    }
-    if (status === "rejected" || status === "failed") {
-      return this._badge("mdi:image-broken-variant", status, "warn", this._photoTitle(zone));
+      return this._badge("mdi:image-off-outline", "No photo", "muted photo-diagnostic", this._photoTitle(zone));
     }
     if (status === "disabled" && this.config.show_disabled_photo_status) {
-      return this._badge("mdi:image-outline", "photos off", "muted", this._photoTitle(zone));
+      return this._badge("mdi:image-outline", "photos off", "muted photo-diagnostic", this._photoTitle(zone));
     }
+    return "";
+  }
+
+  _photoErrorTemplate(zone, label) {
+    const title = this._photoTitle(zone);
+    return `
+      <div class="photo-error" role="status" aria-label="${this._escapeAttr(label)}" title="${this._escapeAttr(title)}">
+        <ha-icon icon="mdi:image-off-outline"></ha-icon>
+        <span>${this._escape(label)}</span>
+      </div>
+    `;
+  }
+
+  _photoErrorLabel(zone) {
+    const source = zone.image_source || "";
+    if (source === "local_override" || source === "rachio_import") {
+      return "";
+    }
+    const status = zone.photo_import_status || "";
+    const reason = zone.photo_import_reason || "";
+    if (status === "rejected" && reason === "image_too_large") return "image too large";
+    if (status === "rejected" && reason.startsWith("unsupported_content_type")) return "unsupported image";
+    if (status === "rejected") return "image unavailable";
+    if (status === "failed") return "image unavailable";
     return "";
   }
 
   _photoTitle(zone) {
     const status = zone.photo_import_status || "unknown";
-    const reason = zone.photo_import_reason ? `: ${zone.photo_import_reason}` : "";
-    return `Photo import ${status}${reason}`;
+    const reason = zone.photo_import_reason || "";
+    if (status === "rejected" && reason === "image_too_large") {
+      return "Rachio photo is larger than the dashboard import limit, so the card hides the image. Add a local zone photo to replace it.";
+    }
+    if (status === "rejected" && reason.startsWith("unsupported_content_type")) {
+      return "Rachio photo is not a supported image type, so the card hides the image. Add a local zone photo to replace it.";
+    }
+    if (status === "failed") {
+      return `Rachio photo import failed${reason ? `: ${reason}` : ""}. The card hides the image.`;
+    }
+    return `Photo import ${status}${reason ? `: ${reason}` : ""}`;
   }
 
   _compactState(value) {

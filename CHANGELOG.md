@@ -1,5 +1,21 @@
 # Changelog
 
+## 0.2.5 - 2026-05-14
+
+- Added a first-class observed-rain source mode for Weather Underground / The
+  Weather Company PWS stations. Operators can enter a station ID and API key in
+  setup/options, and the coordinator resolves the station's current
+  `precipTotal` as a daily observed rain total.
+- Kept Rachio weather-source/forecast hints diagnostic-only; the station
+  override is explicit user configuration, not inferred from Rachio.
+- Redacted the Weather Underground API key from diagnostics exports.
+- Reworked moisture review payloads and dashboard copy around last check-in,
+  last valid moisture, sensor freshness, quality, and write status instead of
+  raw implementation tokens.
+- Updated the packaged zone grid card so rejected or failed Rachio photo
+  imports render as an in-place image error such as `image too large`, not as a
+  raw `rejected` pill.
+
 ## 0.2.4 - 2026-05-11
 
 - Replaced live Home Assistant dashboard captures with sanitized public product

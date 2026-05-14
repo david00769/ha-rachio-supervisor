@@ -209,6 +209,9 @@ Accepted v1 actual-rain source:
 - any numeric Home Assistant observed-rain entity chosen by the user
 - a Home Assistant weather entity only when it exposes a numeric observed
   rainfall or precipitation total
+- a configured Weather Underground / The Weather Company PWS station override
+  when the user provides a station ID and API key; this is treated as a
+  user-selected observed-rain source, not as data inferred from Rachio
 
 Forecast integrations are not the core story in v1. The important distinction
 is:
@@ -515,6 +518,9 @@ Initial success should be judged by:
   such as local 24h gauges, daily totals, `rain_since_9am`, and Weather
   Underground-style `precipTotal` are not misrepresented as the same kind of
   measurement
+- Weather Underground station overrides expose the configured station ID and
+  observed timestamp in diagnostics; the station-specific `precipTotal` is a
+  daily observed total unless the provider/source explicitly says otherwise
 - Rachio weather-source/forecast hints are collected for diagnostics only and
   do not drive actual-rain decisions
 - heat assist is a read-only weather outlook in v1; it must not show

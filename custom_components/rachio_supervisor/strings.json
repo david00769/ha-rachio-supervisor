@@ -8,7 +8,10 @@
         "data": {
           "site_name": "Site name",
           "rachio_config_entry_id": "Existing Rachio integration",
+          "rain_source_mode": "Observed rain source",
           "rain_actuals_entity": "Observed rainfall total entity",
+          "weather_underground_station_id": "Weather Underground station ID",
+          "weather_underground_api_key": "Weather Underground API key",
           "moisture_sensor_entities": "Candidate moisture sensors",
           "zone_count": "Zone count",
           "observe_first": "Start in observe-first mode",
@@ -46,7 +49,10 @@
         "data": {
           "site_name": "Site name",
           "rachio_config_entry_id": "Existing Rachio integration",
+          "rain_source_mode": "Observed rain source",
           "rain_actuals_entity": "Observed rainfall total entity",
+          "weather_underground_station_id": "Weather Underground station ID",
+          "weather_underground_api_key": "Weather Underground API key",
           "moisture_sensor_entities": "Candidate moisture sensors",
           "zone_count": "Zone count",
           "observe_first": "Start in observe-first mode",
@@ -79,6 +85,10 @@
   },
   "abort": {
     "no_rachio_entries": "No Home Assistant Rachio config entries were found. Install and configure the built-in Rachio integration first."
+  },
+  "error": {
+    "required": "Required for the selected rain source.",
+    "invalid_station_id": "Enter the Weather Underground station ID, for example KCAEXAMP1."
   },
   "entity": {
     "sensor": {

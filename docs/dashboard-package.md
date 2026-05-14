@@ -263,6 +263,8 @@ Known photo limits:
 
 - Rachio `imageUrl` may be absent for some zones.
 - Very large Rachio originals are rejected rather than hotlinked.
+- Rejected or failed photo imports should render as an in-place image error,
+  such as `image too large`, not as a raw `rejected` status pill.
 - Photo import is opt-in and read-only.
 - Manual local overrides always win.
 - Unresolved zones use `/rachio_supervisor/zone-placeholder.svg`.
@@ -302,6 +304,12 @@ Rain evidence should keep two labels distinct:
 - `Actual rain` is the selected Home Assistant observed-rain source, with
   `window` and `confidence` attributes explaining whether the number is rolling
   24h, today, since 9am, or another source-specific total
+- Weather Underground / The Weather Company PWS `precipTotal` sources should
+  show as `today` unless a Home Assistant template or custom sensor calculates
+  and labels a true rolling 24h value
+- If the rain source is a direct Weather Underground PWS override, show the
+  configured station source label and observed timestamp from the actual-rain
+  sensor attributes
 - `Catch-up evidence` should display the dated Rachio skip/rain amount when one
   is driving review, with the machine status kept in the `status` attribute
 
@@ -470,6 +478,20 @@ The UI must show what changes before exposing a write action:
 - `Sensor 13% -> Rachio zone moisture`
 - `last check-in: 4h ago - fresh - high confidence`
 - `last valid: 2d ago - stale - blocked`
+
+For moisture review list rows, prefer the operator labels exposed in
+`moisture_review_items`:
+
+- `last_check_in_label`
+- `last_valid_moisture_label`
+- `sensor_evidence_label`
+- `moisture_quality_label`
+- `write_status_label`
+
+Avoid making `data_quality`, `moisture_quality_note`, or
+`moisture_write_back_ready` the primary visible copy. Those tokens are useful
+for conditional styling, but they read like implementation state when a sensor
+is asleep or stale.
 
 If the Rachio public API does not expose the current zone moisture estimate,
 the dashboard must say `not reported` instead of inventing a comparison.

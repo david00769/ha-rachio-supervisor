@@ -7,7 +7,17 @@ from dataclasses import asdict
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 
-from .const import DOMAIN, VERSION
+from .const import CONF_WEATHER_UNDERGROUND_API_KEY, DOMAIN, VERSION
+
+REDACTED = "**REDACTED**"
+
+
+def _redact_config(data: dict) -> dict:
+    """Return config data safe for diagnostics export."""
+    redacted = dict(data or {})
+    if redacted.get(CONF_WEATHER_UNDERGROUND_API_KEY):
+        redacted[CONF_WEATHER_UNDERGROUND_API_KEY] = REDACTED
+    return redacted
 
 
 async def async_get_config_entry_diagnostics(
@@ -20,8 +30,8 @@ async def async_get_config_entry_diagnostics(
         "domain": DOMAIN,
         "version": VERSION,
         "title": entry.title,
-        "entry_data": entry.data,
-        "entry_options": entry.options,
+        "entry_data": _redact_config(entry.data),
+        "entry_options": _redact_config(entry.options),
         "snapshot": asdict(coordinator.data),
         "notes": [
             "This diagnostics payload reflects the current public runtime milestone.",

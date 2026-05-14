@@ -73,12 +73,20 @@ def _install_homeassistant_stubs() -> None:
         def _abort_if_unique_id_configured(self) -> None:
             return None
 
-        def async_show_form(self, *, step_id: str, data_schema=None, description_placeholders=None):
+        def async_show_form(
+            self,
+            *,
+            step_id: str,
+            data_schema=None,
+            description_placeholders=None,
+            errors=None,
+        ):
             return {
                 "type": "form",
                 "step_id": step_id,
                 "data_schema": data_schema,
                 "description_placeholders": description_placeholders,
+                "errors": errors or {},
             }
 
         def async_create_entry(self, *, title: str, data: dict):
@@ -95,12 +103,20 @@ def _install_homeassistant_stubs() -> None:
         def async_abort(self, *, reason: str):
             return {"type": "abort", "reason": reason}
 
-        def async_show_form(self, *, step_id: str, data_schema=None, description_placeholders=None):
+        def async_show_form(
+            self,
+            *,
+            step_id: str,
+            data_schema=None,
+            description_placeholders=None,
+            errors=None,
+        ):
             return {
                 "type": "form",
                 "step_id": step_id,
                 "data_schema": data_schema,
                 "description_placeholders": description_placeholders,
+                "errors": errors or {},
             }
 
         def async_create_entry(self, *, title: str, data: dict):
@@ -163,6 +179,7 @@ def _install_homeassistant_stubs() -> None:
 
     class TextSelectorType:
         TEXT = "text"
+        PASSWORD = "password"
 
     class SelectSelectorMode:
         DROPDOWN = "dropdown"
@@ -399,6 +416,7 @@ from custom_components.rachio_supervisor.coordinator import (
     observed_rain_24h,
     resolve_moisture_evidence,
     resolve_rain_actuals_entity,
+    resolve_weather_underground_pws_actuals,
     schedule_rule_next_run,
     schedule_rule_watering_days,
 )
@@ -1852,6 +1870,9 @@ class RuntimeHealthAndMoistureTests(unittest.TestCase):
             moisture_age_label="4h",
             moisture_freshness="fresh",
             moisture_confidence="low",
+            moisture_source_state="58",
+            moisture_source_last_updated="2026-05-10T02:12:51+00:00",
+            moisture_source_age_label="4h",
         )
 
         items = build_moisture_review_items((schedule,))
@@ -1862,11 +1883,22 @@ class RuntimeHealthAndMoistureTests(unittest.TestCase):
         self.assertEqual(items[0]["recommended_action"], "none")
         self.assertEqual(items[0]["recommended_action_label"], "No write needed")
         self.assertEqual(items[0]["data_quality"], "ok")
+        self.assertEqual(items[0]["moisture_quality_label"], "Evidence ok")
+        self.assertEqual(items[0]["last_check_in_label"], "Last check-in: 4h ago")
+        self.assertEqual(
+            items[0]["last_valid_moisture_label"],
+            "Last valid: 58% - 4h ago",
+        )
+        self.assertEqual(
+            items[0]["sensor_evidence_label"],
+            "Last check-in: 4h ago - Last valid: 58% - 4h ago",
+        )
         self.assertEqual(
             items[0]["moisture_last_updated"],
             "2026-05-10T02:12:51+00:00",
         )
         self.assertEqual(items[0]["write_summary"], "Sensor 58% -> Rachio zone moisture")
+        self.assertEqual(items[0]["write_status_label"], "Manual write ready")
         self.assertEqual(items[0]["rachio_moisture_value"], "not_reported")
         self.assertTrue(items[0]["can_write"])
 
@@ -1886,6 +1918,9 @@ class RuntimeHealthAndMoistureTests(unittest.TestCase):
             moisture_age_label="12h",
             moisture_freshness="recent",
             moisture_confidence="medium",
+            moisture_source_state="13",
+            moisture_source_last_updated="2026-05-10T00:00:00+00:00",
+            moisture_source_age_label="12h",
         )
 
         item = build_moisture_review_items((hydrated,))[0]
@@ -1893,6 +1928,46 @@ class RuntimeHealthAndMoistureTests(unittest.TestCase):
         self.assertEqual(item["posture_note"], "Recent sample - confirm before write")
         self.assertEqual(item["moisture_age_label"], "12h")
         self.assertEqual(item["moisture_confidence"], "medium")
+        self.assertEqual(item["last_check_in_label"], "Last check-in: 12h ago")
+        self.assertEqual(item["write_status_label"], "Manual write ready")
+
+    def test_moisture_review_item_prefers_last_check_in_for_sleeping_sensor(self) -> None:
+        schedule = self._moisture_schedule()
+        sleeping = replace(
+            schedule,
+            name="Boxwood + Liriope",
+            moisture_entity_id="sensor.boxwoods_liriopes_soil_moisture",
+            moisture_band="missing",
+            moisture_status="unavailable",
+            recommended_action="none",
+            review_state="clear",
+            moisture_source_state="unknown",
+            moisture_source_last_updated="2026-05-11T11:04:41+00:00",
+            moisture_source_age_label="2d",
+            moisture_freshness="expired",
+            moisture_quality_note="expired_sample",
+            moisture_quality_flags=(
+                "sensor_sleeping_or_offline",
+                "expired_sample",
+            ),
+            write_summary="No usable moisture value to write",
+        )
+
+        item = build_moisture_review_items((sleeping,))[0]
+
+        self.assertEqual(item["posture_note"], "Sensor offline")
+        self.assertEqual(item["last_check_in_label"], "Last check-in: 2d ago")
+        self.assertEqual(item["last_valid_moisture_label"], "Last valid: none")
+        self.assertEqual(
+            item["sensor_evidence_label"],
+            "Last check-in: 2d ago - Last valid: none",
+        )
+        self.assertEqual(item["moisture_quality_label"], "No recent moisture sample")
+        self.assertEqual(
+            item["write_status_label"],
+            "No write needed - No usable moisture value to write",
+        )
+        self.assertFalse(item["can_write"])
 
     def test_rain_actuals_accepts_numeric_sensor(self) -> None:
         hass = SimpleNamespace(
@@ -1985,6 +2060,38 @@ class RuntimeHealthAndMoistureTests(unittest.TestCase):
         self.assertEqual(result.value, "4.6")
         self.assertEqual(result.status, "ok")
         self.assertEqual(result.window, "today")
+
+    def test_weather_underground_pws_source_resolves_precip_total(self) -> None:
+        payload = (
+            b'{"observations":[{"stationID":"KCAEXAMP1",'
+            b'"obsTimeLocal":"2026-05-14 11:45:32",'
+            b'"metric":{"precipTotal":2.4,"precipRate":0.0}}]}'
+        )
+
+        with patch.object(
+            coordinator_module.urllib.request,
+            "urlopen",
+            return_value=_ImageResponse(payload, content_type="application/json"),
+        ):
+            result = resolve_weather_underground_pws_actuals("kcaexamp1", "api-key")
+
+        self.assertEqual(result.value, "2.4")
+        self.assertEqual(result.unit, "mm")
+        self.assertEqual(result.status, "ok")
+        self.assertEqual(result.window, "today")
+        self.assertEqual(result.confidence, "medium")
+        self.assertEqual(result.source_type, "weather_underground_pws")
+        self.assertEqual(result.source_id, "weather_underground_pws:KCAEXAMP1")
+        self.assertEqual(result.observed_at, "2026-05-14 11:45:32")
+
+    def test_weather_underground_pws_source_requires_api_key(self) -> None:
+        result = resolve_weather_underground_pws_actuals("KCAEXAMP1", "")
+
+        self.assertEqual(result.status, "api_key_missing")
+        self.assertEqual(
+            result.missing_input,
+            "rain_actuals_weather_station_api_key_missing",
+        )
 
     def test_rain_candidate_discovery_finds_numeric_rain_sensor(self) -> None:
         states: dict[str, object] = {
@@ -2591,6 +2698,8 @@ class RuntimeHealthAndMoistureTests(unittest.TestCase):
         self.assertIn("Supervisor not ready", source)
         self.assertIn("Data warnings", source)
         self.assertIn("_photoBadge", source)
+        self.assertIn("_photoErrorLabel", source)
+        self.assertIn("image too large", source)
         self.assertIn("No photo", source)
         self.assertIn("show_disabled_photo_status", source)
         self.assertIn("_moistureLabel", source)
@@ -3273,6 +3382,106 @@ class ConfigFlowBehaviorTests(unittest.TestCase):
 
         self.assertTrue(marker.default)
 
+    def test_flow_schema_includes_weather_underground_station_override(self) -> None:
+        schema = config_flow._flow_schema(
+            [("entry-1", "Demo Rachio")],
+            {
+                "rain_source_mode": "weather_underground_pws",
+                "weather_underground_station_id": "KCAEXAMP1",
+            },
+        )
+        markers = {getattr(marker, "value", None): marker for marker in schema.value}
+
+        self.assertEqual(
+            markers["rain_source_mode"].default,
+            "weather_underground_pws",
+        )
+        self.assertEqual(
+            markers["weather_underground_station_id"].default,
+            "KCAEXAMP1",
+        )
+        self.assertIn("weather_underground_api_key", markers)
+
+    def test_weather_underground_mode_requires_station_and_key(self) -> None:
+        flow = config_flow.RachioSupervisorConfigFlow()
+        flow.hass = self._hass()
+        user_input = {
+            "site_name": "Demo Site",
+            "rachio_config_entry_id": "entry-1",
+            "rain_source_mode": "weather_underground_pws",
+            "weather_underground_station_id": "",
+            "weather_underground_api_key": "",
+            "moisture_sensor_entities": [],
+        }
+
+        with patch.object(
+            config_flow,
+            "rachio_entry_options",
+            return_value=[("entry-1", "Demo Rachio")],
+        ):
+            result = asyncio.run(flow.async_step_user(user_input))
+
+        self.assertEqual(result["type"], "form")
+        self.assertEqual(result["step_id"], "user")
+        self.assertEqual(
+            result["errors"]["weather_underground_station_id"],
+            "required",
+        )
+        self.assertEqual(
+            result["errors"]["weather_underground_api_key"],
+            "required",
+        )
+
+    def test_options_flow_preserves_saved_weather_underground_api_key(self) -> None:
+        entry = SimpleNamespace(
+            data={
+                "site_name": "Demo Site",
+                "rachio_config_entry_id": "entry-1",
+                "weather_underground_api_key": "saved-key",
+            },
+            options={},
+        )
+        flow = config_flow.RachioSupervisorOptionsFlow(entry)
+        flow.hass = self._hass()
+        flow._schedule_options = []
+        user_input = {
+            "site_name": "Demo Site",
+            "rachio_config_entry_id": "entry-1",
+            "rain_source_mode": "weather_underground_pws",
+            "weather_underground_station_id": "kcaexamp1",
+            "weather_underground_api_key": "",
+            "moisture_sensor_entities": [],
+        }
+
+        with patch.object(
+            config_flow,
+            "rachio_entry_options",
+            return_value=[("entry-1", "Demo Rachio")],
+        ):
+            first = asyncio.run(flow.async_step_init(user_input))
+        self.assertEqual(first["type"], "form")
+        self.assertEqual(first["step_id"], "policy")
+
+        result = asyncio.run(
+            flow.async_step_policy(
+                {
+                    "auto_catch_up_schedule_entities": [],
+                    "auto_missed_run_schedule_entities": [],
+                    "auto_moisture_write_schedule_entities": [],
+                }
+            )
+        )
+
+        self.assertEqual(result["type"], "create_entry")
+        self.assertEqual(
+            result["data"]["weather_underground_station_id"],
+            "KCAEXAMP1",
+        )
+        self.assertEqual(
+            result["data"]["weather_underground_api_key"],
+            "saved-key",
+        )
+
 
 class DiagnosticsAndEntityTests(unittest.TestCase):
     def _snapshot(self) -> SupervisorSnapshot:
@@ -3424,6 +3633,24 @@ class DiagnosticsAndEntityTests(unittest.TestCase):
         self.assertEqual(payload["domain"], DOMAIN)
         self.assertEqual(payload["snapshot"]["health"], "healthy")
         self.assertIn("Automatic irrigation behavior remains intentionally narrow and opt-in.", payload["notes"])
+
+    def test_diagnostics_redacts_weather_underground_api_key(self) -> None:
+        snapshot = self._snapshot()
+        coordinator = SimpleNamespace(data=snapshot)
+        hass = SimpleNamespace(data={DOMAIN: {"entry-1": coordinator}})
+        entry = SimpleNamespace(
+            entry_id="entry-1",
+            title="Demo Site",
+            data={"site_name": "Demo Site"},
+            options={"weather_underground_api_key": "secret-key"},
+        )
+
+        payload = asyncio.run(diagnostics.async_get_config_entry_diagnostics(hass, entry))
+
+        self.assertEqual(
+            payload["entry_options"]["weather_underground_api_key"],
+            "**REDACTED**",
+        )
 
     def test_site_sensor_sets_explicit_name_and_attributes(self) -> None:
         snapshot = self._snapshot()

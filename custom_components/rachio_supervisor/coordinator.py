@@ -4,9 +4,12 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
+import json
 from pathlib import Path
 import re
+import urllib.error
 import urllib.parse
+import urllib.request
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from homeassistant.config_entries import ConfigEntry, ConfigEntryState
@@ -30,17 +33,24 @@ from .const import (
     CONF_OBSERVE_FIRST,
     CONF_RACHIO_CONFIG_ENTRY_ID,
     CONF_RAIN_ACTUALS_ENTITY,
+    CONF_RAIN_SOURCE_MODE,
     CONF_SAFE_WINDOW_END_HOUR,
     CONF_SCHEDULE_MOISTURE_MAP,
     CONF_SITE_NAME,
+    CONF_WEATHER_UNDERGROUND_API_KEY,
+    CONF_WEATHER_UNDERGROUND_STATION_ID,
     CONF_WEBHOOK_ID,
     CONF_ZONE_COUNT,
     DEFAULT_ENABLE_PERSISTENT_NOTIFICATIONS,
     DEFAULT_HEALTH_RECONCILE_HOUR,
     DEFAULT_HEALTH_RECONCILE_MINUTE,
     DEFAULT_IMPORT_RACHIO_ZONE_PHOTOS,
+    DEFAULT_RAIN_SOURCE_MODE,
     DEFAULT_SAFE_WINDOW_END_HOUR,
     DOMAIN,
+    RAIN_SOURCE_MODE_ENTITY,
+    RAIN_SOURCE_MODE_NONE,
+    RAIN_SOURCE_MODE_WEATHER_UNDERGROUND,
     WEBHOOK_CONST_ID,
 )
 from .discovery import (
@@ -57,7 +67,9 @@ EXPECTED_EVENT_FRESHNESS_HOURS = 36
 DEGRADED_FAST_WINDOW_HOURS = 2
 AUTO_MOISTURE_WRITE_COOLDOWN_HOURS = 24
 ZONE_PLACEHOLDER_PATH = "/rachio_supervisor/zone-placeholder.svg"
+WEATHER_UNDERGROUND_CURRENT_URL = "https://api.weather.com/v2/pws/observations/current"
 WORD_RE = re.compile(r"[a-z0-9]+")
+WEATHER_UNDERGROUND_STATION_RE = re.compile(r"^[A-Z0-9_-]{3,32}$")
 MOISTURE_FRESH_HOURS = 6
 MOISTURE_RECENT_HOURS = 30
 MOISTURE_STALE_HOURS = 72
@@ -141,6 +153,9 @@ class RainActualsResolution:
     reason: str | None
     window: str
     confidence: str
+    source_type: str = "home_assistant_entity"
+    source_id: str | None = None
+    observed_at: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -350,6 +365,9 @@ class SupervisorSnapshot:
     weather_outlook: dict[str, object] | None
     discovered_entities: dict[str, object]
     schedule_snapshots: tuple[ScheduleSnapshot, ...]
+    rain_source_mode: str = DEFAULT_RAIN_SOURCE_MODE
+    rain_source_label: str = "unconfigured"
+    rain_source_observed_at: str | None = None
 
 
 def event_dt(event: dict[str, object]) -> datetime:
@@ -1217,6 +1235,129 @@ def _is_supervisor_rain_diagnostic_entity(
     return "rachio" in object_id or "rachio" in friendly_name
 
 
+def _normalise_weather_underground_station_id(station_id: object) -> str:
+    """Return a stable Weather Underground station id."""
+    return str(station_id or "").strip().upper()
+
+
+def resolve_weather_underground_pws_actuals(
+    station_id: object,
+    api_key: object,
+) -> RainActualsResolution:
+    """Resolve observed rain directly from a Weather Underground PWS station."""
+    station = _normalise_weather_underground_station_id(station_id)
+    source_id = f"weather_underground_pws:{station}" if station else None
+    if not station:
+        return RainActualsResolution(
+            value="unconfigured",
+            unit=None,
+            status="unconfigured",
+            missing_input="rain_actuals_weather_station_unconfigured",
+            reason="No Weather Underground station id is configured.",
+            window="unconfigured",
+            confidence="none",
+            source_type=RAIN_SOURCE_MODE_WEATHER_UNDERGROUND,
+            source_id=source_id,
+        )
+    if WEATHER_UNDERGROUND_STATION_RE.fullmatch(station) is None:
+        return RainActualsResolution(
+            value="unavailable",
+            unit=None,
+            status="invalid_station_id",
+            missing_input="rain_actuals_weather_station_invalid",
+            reason="Configured Weather Underground station id is invalid.",
+            window="unknown",
+            confidence="none",
+            source_type=RAIN_SOURCE_MODE_WEATHER_UNDERGROUND,
+            source_id=source_id,
+        )
+    key = str(api_key or "").strip()
+    if not key:
+        return RainActualsResolution(
+            value="unconfigured",
+            unit=None,
+            status="api_key_missing",
+            missing_input="rain_actuals_weather_station_api_key_missing",
+            reason="No Weather Underground API key is configured.",
+            window="unconfigured",
+            confidence="none",
+            source_type=RAIN_SOURCE_MODE_WEATHER_UNDERGROUND,
+            source_id=source_id,
+        )
+
+    query = urllib.parse.urlencode(
+        {
+            "apiKey": key,
+            "stationId": station,
+            "numericPrecision": "decimal",
+            "format": "json",
+            "units": "m",
+        }
+    )
+    request = urllib.request.Request(
+        f"{WEATHER_UNDERGROUND_CURRENT_URL}?{query}",
+        headers={"User-Agent": "RachioSupervisor/0.2"},
+    )
+    try:
+        with urllib.request.urlopen(request, timeout=30) as response:
+            payload = json.loads(response.read().decode("utf-8"))
+    except urllib.error.HTTPError as exc:
+        return RainActualsResolution(
+            value="unavailable",
+            unit="mm",
+            status="provider_error",
+            missing_input="rain_actuals_weather_station_unavailable",
+            reason=f"Weather Underground station fetch failed with HTTP {exc.code}.",
+            window="unknown",
+            confidence="none",
+            source_type=RAIN_SOURCE_MODE_WEATHER_UNDERGROUND,
+            source_id=source_id,
+        )
+    except (urllib.error.URLError, TimeoutError, json.JSONDecodeError) as exc:
+        return RainActualsResolution(
+            value="unavailable",
+            unit="mm",
+            status="provider_error",
+            missing_input="rain_actuals_weather_station_unavailable",
+            reason=f"Weather Underground station fetch failed: {exc}",
+            window="unknown",
+            confidence="none",
+            source_type=RAIN_SOURCE_MODE_WEATHER_UNDERGROUND,
+            source_id=source_id,
+        )
+
+    observations = payload.get("observations") if isinstance(payload, dict) else None
+    observation = observations[0] if isinstance(observations, list) and observations else {}
+    metric = observation.get("metric") if isinstance(observation, dict) else None
+    precip_total = _coerce_float((metric or {}).get("precipTotal"))
+    observed_at = str(observation.get("obsTimeLocal") or observation.get("obsTimeUtc") or "")
+    if precip_total is None:
+        return RainActualsResolution(
+            value="not_reported",
+            unit="mm",
+            status="precip_total_missing",
+            missing_input="rain_actuals_weather_station_precip_total_missing",
+            reason=f"Weather Underground station {station} did not report precipTotal.",
+            window="today",
+            confidence="none",
+            source_type=RAIN_SOURCE_MODE_WEATHER_UNDERGROUND,
+            source_id=source_id,
+            observed_at=observed_at or None,
+        )
+    return RainActualsResolution(
+        value=f"{precip_total:g}",
+        unit="mm",
+        status="ok",
+        missing_input=None,
+        reason=f"Observed rainfall total resolved from Weather Underground station {station}.",
+        window="today",
+        confidence="medium",
+        source_type=RAIN_SOURCE_MODE_WEATHER_UNDERGROUND,
+        source_id=source_id,
+        observed_at=observed_at or None,
+    )
+
+
 def resolve_rain_actuals_entity(
     hass: HomeAssistant,
     entity_id: str | None,
@@ -1634,6 +1775,71 @@ def moisture_data_quality(moisture_band: str) -> str:
     return "unknown"
 
 
+def _age_label(age_label: str | None) -> str:
+    """Return an operator-facing age phrase from a compact age token."""
+    if not age_label or age_label == "unknown":
+        return "unknown"
+    return f"{age_label} ago"
+
+
+def moisture_quality_label(quality_note: str | None) -> str:
+    """Return human-readable copy for one moisture quality token."""
+    return {
+        "missing_sensor": "Mapped sensor missing",
+        "expired_sample": "No recent moisture sample",
+        "stale_sample": "Stale moisture sample",
+        "boundary_value_needs_calibration": "Calibration review",
+        "sensor_sleeping_or_offline": "Sensor sleeping or offline",
+        "non_numeric_state": "Sensor state is not numeric",
+    }.get(quality_note or "", "Evidence ok")
+
+
+def moisture_last_check_in_label(schedule: ScheduleSnapshot) -> str:
+    """Return the mapped sensor check-in label for one schedule."""
+    if not schedule.moisture_entity_id:
+        return "Last check-in: sensor not mapped"
+    if not schedule.moisture_source_last_updated:
+        return "Last check-in: not seen"
+    return f"Last check-in: {_age_label(schedule.moisture_source_age_label)}"
+
+
+def moisture_last_valid_label(schedule: ScheduleSnapshot) -> str:
+    """Return the last valid moisture observation label for one schedule."""
+    value = schedule.moisture_observed_value
+    observed_at = schedule.moisture_observed_at
+    if value is None and schedule.moisture_band in {"dry", "target", "wet"}:
+        value = schedule.moisture_value
+        observed_at = schedule.moisture_last_updated
+    if value is None or value in {STATE_UNAVAILABLE, STATE_UNKNOWN}:
+        return "Last valid: none"
+    if observed_at:
+        return f"Last valid: {value}% - {_age_label(schedule.moisture_age_label)}"
+    return f"Last valid: {value}%"
+
+
+def moisture_sensor_evidence_label(schedule: ScheduleSnapshot) -> str:
+    """Return a compact evidence line for dashboard moisture review rows."""
+    return (
+        f"{moisture_last_check_in_label(schedule)} - "
+        f"{moisture_last_valid_label(schedule)}"
+    )
+
+
+def moisture_write_status_label(
+    *,
+    action_label: str,
+    can_write: bool,
+    write_value: str | None,
+    write_summary: str,
+) -> str:
+    """Return a dashboard-safe write status label."""
+    if can_write:
+        return "Manual write ready"
+    if write_value is None:
+        return f"{action_label} - {write_summary}"
+    return action_label
+
+
 def moisture_review_posture(schedule: ScheduleSnapshot) -> tuple[str, int]:
     """Return moisture review copy and sort rank for one schedule."""
     flags = set(schedule.moisture_quality_flags)
@@ -1679,6 +1885,12 @@ def build_moisture_review_items(
             and schedule.moisture_write_back_ready == "ready"
         ):
             write_summary = f"Sensor {write_value}% -> Rachio zone moisture"
+        action_label = moisture_action_label(schedule.recommended_action)
+        can_write = bool(
+            schedule.moisture_write_back_ready == "ready"
+            and write_value is not None
+            and schedule.moisture_freshness in {"fresh", "recent"}
+        )
         items.append(
             {
                 "schedule_name": schedule.name,
@@ -1686,9 +1898,7 @@ def build_moisture_review_items(
                 "moisture_band": schedule.moisture_band,
                 "posture_note": posture_note,
                 "recommended_action": schedule.recommended_action,
-                "recommended_action_label": moisture_action_label(
-                    schedule.recommended_action
-                ),
+                "recommended_action_label": action_label,
                 "review_state": schedule.review_state,
                 "moisture_write_back_ready": schedule.moisture_write_back_ready,
                 "moisture_value": schedule.moisture_value,
@@ -1699,20 +1909,28 @@ def build_moisture_review_items(
                 "moisture_freshness": schedule.moisture_freshness,
                 "moisture_confidence": schedule.moisture_confidence,
                 "moisture_quality_note": schedule.moisture_quality_note,
+                "moisture_quality_label": moisture_quality_label(
+                    schedule.moisture_quality_note
+                ),
                 "moisture_quality_flags": list(schedule.moisture_quality_flags),
                 "moisture_source_state": schedule.moisture_source_state,
                 "moisture_source_last_updated": schedule.moisture_source_last_updated,
                 "moisture_source_age_label": schedule.moisture_source_age_label,
                 "moisture_sampling_interval_seconds": schedule.moisture_sampling_interval_seconds,
+                "last_check_in_label": moisture_last_check_in_label(schedule),
+                "last_valid_moisture_label": moisture_last_valid_label(schedule),
+                "sensor_evidence_label": moisture_sensor_evidence_label(schedule),
                 "rachio_moisture_value": schedule.rachio_moisture_value or "not_reported",
                 "write_value": write_value,
                 "write_target_label": "Rachio zone moisture",
                 "write_summary": write_summary,
-                "can_write": bool(
-                    schedule.moisture_write_back_ready == "ready"
-                    and write_value is not None
-                    and schedule.moisture_freshness in {"fresh", "recent"}
+                "write_status_label": moisture_write_status_label(
+                    action_label=action_label,
+                    can_write=can_write,
+                    write_value=write_value,
+                    write_summary=write_summary,
                 ),
+                "can_write": can_write,
                 "auto_moisture_write_enabled": schedule.auto_moisture_write_enabled,
                 "auto_moisture_write_status": schedule.auto_moisture_write_status,
                 "last_moisture_write_status": schedule.last_moisture_write_status,
@@ -3325,11 +3543,40 @@ class RachioSupervisorCoordinator(DataUpdateCoordinator[SupervisorSnapshot]):
             return count
 
         missing_inputs: list[str] = []
-        rain_actuals_entity = str(data.get(CONF_RAIN_ACTUALS_ENTITY, "") or "")
-        rain_resolution = resolve_rain_actuals_entity(self.hass, rain_actuals_entity)
+        rain_source_mode = str(
+            data.get(CONF_RAIN_SOURCE_MODE, DEFAULT_RAIN_SOURCE_MODE)
+            or DEFAULT_RAIN_SOURCE_MODE
+        )
+        if rain_source_mode == RAIN_SOURCE_MODE_WEATHER_UNDERGROUND:
+            station_id = _normalise_weather_underground_station_id(
+                data.get(CONF_WEATHER_UNDERGROUND_STATION_ID, "")
+            )
+            rain_actuals_entity = (
+                f"weather_underground_pws:{station_id}" if station_id else ""
+            )
+            rain_resolution = await self.hass.async_add_executor_job(
+                resolve_weather_underground_pws_actuals,
+                station_id,
+                data.get(CONF_WEATHER_UNDERGROUND_API_KEY, ""),
+            )
+        elif rain_source_mode == RAIN_SOURCE_MODE_NONE:
+            rain_actuals_entity = ""
+            rain_resolution = RainActualsResolution(
+                value="unconfigured",
+                unit=None,
+                status="unconfigured",
+                missing_input="rain_actuals_unconfigured",
+                reason="No observed rainfall source is configured.",
+                window="unconfigured",
+                confidence="none",
+                source_type=RAIN_SOURCE_MODE_NONE,
+            )
+        else:
+            rain_actuals_entity = str(data.get(CONF_RAIN_ACTUALS_ENTITY, "") or "")
+            rain_resolution = resolve_rain_actuals_entity(self.hass, rain_actuals_entity)
         rain_source_candidates = discover_rain_source_candidates(
             self.hass,
-            rain_actuals_entity or None,
+            rain_actuals_entity if rain_source_mode == RAIN_SOURCE_MODE_ENTITY else None,
         )
         if rain_resolution.missing_input:
             missing_inputs.append(rain_resolution.missing_input)
@@ -3698,6 +3945,11 @@ class RachioSupervisorCoordinator(DataUpdateCoordinator[SupervisorSnapshot]):
         zone_overview_items = build_zone_overview_items(
             self.hass, schedule_snapshots, flow_alert_snapshots
         )
+        rain_source_label = (
+            rain_resolution.source_id
+            or rain_actuals_entity
+            or ("unconfigured" if rain_source_mode == RAIN_SOURCE_MODE_NONE else rain_source_mode)
+        )
 
         return SupervisorSnapshot(
             health=health,
@@ -3712,7 +3964,7 @@ class RachioSupervisorCoordinator(DataUpdateCoordinator[SupervisorSnapshot]):
             linked_entry_title=linked_entry_title,
             linked_entry_state=linked_entry_state,
             rachio_config_entry_id=data.get(CONF_RACHIO_CONFIG_ENTRY_ID, ""),
-            rain_actuals_entity=data.get(CONF_RAIN_ACTUALS_ENTITY, ""),
+            rain_actuals_entity=rain_actuals_entity,
             zone_count=int(data.get(CONF_ZONE_COUNT, 0)),
             configured_zone_count=len(linked_entities.zone_switches),
             active_zone_count=active_count(linked_entities.zone_switches),
@@ -3784,4 +4036,7 @@ class RachioSupervisorCoordinator(DataUpdateCoordinator[SupervisorSnapshot]):
                 "entity_count": len(linked_entities.all_entities),
             },
             schedule_snapshots=schedule_snapshots,
+            rain_source_mode=rain_source_mode,
+            rain_source_label=rain_source_label,
+            rain_source_observed_at=rain_resolution.observed_at,
         )

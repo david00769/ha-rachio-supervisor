@@ -213,6 +213,8 @@ real Home Assistant instance without forcing optional inputs too early.
   entity registry, and it now works against registry rows that expose either
   `config_entry_ids` or the older single `config_entry_id`
 - `rain_actuals_entity` is optional during initial setup and options edits
+- `Observed rain source` can be left unconfigured, mapped to a Home Assistant
+  observed-rain entity, or set to a Weather Underground PWS station override
 - `rain_actuals_entity` may be a numeric observed-rain sensor/helper, or a
   weather entity only when that weather entity exposes a numeric observed
   precipitation total; forecast-only weather entities are reported as data
@@ -228,6 +230,19 @@ real Home Assistant instance without forcing optional inputs too early.
   custom integration if it exposes a numeric observed rainfall sensor; the
   dashboard labels the source window honestly, such as `since_9am` or `today`,
   instead of pretending every source is rolling 24h
+- Weather Underground / The Weather Company PWS stations can be used when Home
+  Assistant exposes the station's observed total through a REST or custom
+  sensor. A station `precipTotal` value is treated as a daily observed total
+  unless the HA entity or attribute clearly says it is rolling 24h. If Home
+  Assistant owns the REST/custom sensor, keep API keys in Home Assistant
+  secrets and select the resulting sensor as
+  `rain_actuals_entity`; do not map a forecast-only WU/weather entity as
+  observed rain.
+- Alternatively, choose the Weather Underground PWS source mode in the
+  integration options, enter the station ID and API key, and the supervisor will
+  poll the station's current `precipTotal` directly. Diagnostics redact the
+  saved key. This is a station-specific observed-rain override and is not
+  discovered from the Rachio controller.
 - Rachio's public forecast endpoint is used for source/provider hints and the
   read-only `Heat assist` outlook. Forecast precipitation is not treated as
   observed rainfall unless a future API payload exposes a clearly observed
@@ -320,6 +335,9 @@ The zone overview sensor also publishes `photo_import_counts` and
 `photo_import_summary` so users can see how many zones are cached, imported,
 missing, rejected, failed, or disabled without opening Developer Tools for each
 zone row.
+Rejected or failed Rachio photo imports are not shown as status pills on the
+zone image. The card hides the unusable image and shows an in-place error such
+as `image too large`.
 
 Quick Run from the card is manual, editable, and confirmation-gated. It starts
 the selected Rachio zone only for the chosen duration and does not enable
@@ -445,16 +463,20 @@ Initial HACS packaging is in place via:
 - `hacs.json`
 - `custom_components/rachio_supervisor/manifest.json`
 
-Use `v0.2.4` or newer for HACS installs. That build includes the production
+Use `v0.2.5` or newer for HACS installs. That build includes the production
 dashboard cutover fixes, heat-assist outlook, stricter actual-rain source
 handling, schedule-rule zone matching, forced fresh evidence on
 `evaluate_now`, options-flow hardening,
 packaged placeholder fallback, and photo import diagnostics.
+It also includes the explicit Weather Underground PWS station override for
+observed-rain sourcing.
 
 ## Known limitations
 
 - Rachio `imageUrl` may be absent for some zones or accounts.
 - Very large Rachio original images are rejected instead of hotlinked.
+- The card hides rejected images and shows the operator-facing reason in the
+  image area, such as `image too large`.
 - Photo import is opt-in and read-only.
 - Manual local photo overrides always win over imported Rachio photos.
 - Unresolved Rachio zones fall back to the packaged placeholder.

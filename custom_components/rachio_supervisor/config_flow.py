@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import re
 from typing import Any
 
 import voluptuous as vol
@@ -24,9 +25,12 @@ from .const import (
     CONF_OBSERVE_FIRST,
     CONF_RACHIO_CONFIG_ENTRY_ID,
     CONF_RAIN_ACTUALS_ENTITY,
+    CONF_RAIN_SOURCE_MODE,
     CONF_SAFE_WINDOW_END_HOUR,
     CONF_SCHEDULE_MOISTURE_MAP,
     CONF_SITE_NAME,
+    CONF_WEATHER_UNDERGROUND_API_KEY,
+    CONF_WEATHER_UNDERGROUND_STATION_ID,
     CONF_ZONE_COUNT,
     DEFAULT_ALLOW_MOISTURE_WRITE_BACK,
     DEFAULT_AUTO_CATCH_UP_SCHEDULES,
@@ -37,11 +41,15 @@ from .const import (
     DEFAULT_HEALTH_RECONCILE_MINUTE,
     DEFAULT_IMPORT_RACHIO_ZONE_PHOTOS,
     DEFAULT_MOISTURE_SENSOR_ENTITIES,
+    DEFAULT_RAIN_SOURCE_MODE,
     DEFAULT_SCHEDULE_MOISTURE_MAP,
     DEFAULT_OBSERVE_FIRST,
     DEFAULT_SAFE_WINDOW_END_HOUR,
     DEFAULT_ZONE_COUNT,
     DOMAIN,
+    RAIN_SOURCE_MODE_ENTITY,
+    RAIN_SOURCE_MODE_NONE,
+    RAIN_SOURCE_MODE_WEATHER_UNDERGROUND,
 )
 from .discovery import (
     discover_linked_entities,
@@ -64,6 +72,21 @@ MOISTURE_SENSOR_EXCLUDE_HINTS = (
     "temperature",
     "warning",
 )
+RAIN_SOURCE_OPTIONS = [
+    selector.SelectOptionDict(
+        value=RAIN_SOURCE_MODE_ENTITY,
+        label="Home Assistant observed-rain entity",
+    ),
+    selector.SelectOptionDict(
+        value=RAIN_SOURCE_MODE_WEATHER_UNDERGROUND,
+        label="Weather Underground PWS station",
+    ),
+    selector.SelectOptionDict(
+        value=RAIN_SOURCE_MODE_NONE,
+        label="Not configured yet",
+    ),
+]
+WEATHER_UNDERGROUND_STATION_RE = r"^[A-Z0-9_-]{3,32}$"
 
 
 def _moisture_field_key(_schedule_label: str) -> str:
@@ -110,6 +133,52 @@ def _selected_values_in_options(
     if not isinstance(values, list):
         values = list(values or [])
     return [value for value in values if isinstance(value, str) and value in valid_values]
+
+
+def _normalise_basic_input(
+    user_input: dict[str, Any],
+    defaults: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Return normalized setup/options input without dropping saved secrets."""
+    defaults = defaults or {}
+    normalised = dict(user_input)
+    mode = str(
+        normalised.get(
+            CONF_RAIN_SOURCE_MODE,
+            defaults.get(CONF_RAIN_SOURCE_MODE, DEFAULT_RAIN_SOURCE_MODE),
+        )
+        or DEFAULT_RAIN_SOURCE_MODE
+    )
+    normalised[CONF_RAIN_SOURCE_MODE] = mode
+    station_id = str(
+        normalised.get(
+            CONF_WEATHER_UNDERGROUND_STATION_ID,
+            defaults.get(CONF_WEATHER_UNDERGROUND_STATION_ID, ""),
+        )
+        or ""
+    ).strip().upper()
+    normalised[CONF_WEATHER_UNDERGROUND_STATION_ID] = station_id
+    api_key = str(normalised.get(CONF_WEATHER_UNDERGROUND_API_KEY, "") or "").strip()
+    if not api_key:
+        api_key = str(defaults.get(CONF_WEATHER_UNDERGROUND_API_KEY, "") or "").strip()
+    normalised[CONF_WEATHER_UNDERGROUND_API_KEY] = api_key
+    return normalised
+
+
+def _basic_input_errors(user_input: dict[str, Any]) -> dict[str, str]:
+    """Return config-flow errors for the selected rain-source mode."""
+    errors: dict[str, str] = {}
+    if user_input.get(CONF_RAIN_SOURCE_MODE) != RAIN_SOURCE_MODE_WEATHER_UNDERGROUND:
+        return errors
+    station_id = str(user_input.get(CONF_WEATHER_UNDERGROUND_STATION_ID, "") or "")
+    api_key = str(user_input.get(CONF_WEATHER_UNDERGROUND_API_KEY, "") or "")
+    if not station_id:
+        errors[CONF_WEATHER_UNDERGROUND_STATION_ID] = "required"
+    elif re.fullmatch(WEATHER_UNDERGROUND_STATION_RE, station_id) is None:
+        errors[CONF_WEATHER_UNDERGROUND_STATION_ID] = "invalid_station_id"
+    if not api_key:
+        errors[CONF_WEATHER_UNDERGROUND_API_KEY] = "required"
+    return errors
 
 
 def discover_moisture_sensor_entities(hass) -> list[str]:
@@ -233,6 +302,15 @@ def _flow_schema(
             )
         ),
         vol.Required(
+            CONF_RAIN_SOURCE_MODE,
+            default=defaults.get(CONF_RAIN_SOURCE_MODE, DEFAULT_RAIN_SOURCE_MODE),
+        ): selector.SelectSelector(
+            selector.SelectSelectorConfig(
+                options=RAIN_SOURCE_OPTIONS,
+                mode=selector.SelectSelectorMode.DROPDOWN,
+            )
+        ),
+        vol.Required(
             CONF_ZONE_COUNT,
             default=defaults.get(
                 CONF_ZONE_COUNT,
@@ -312,6 +390,17 @@ def _flow_schema(
         )
     schema[rain_marker] = selector.EntitySelector(
         selector.EntitySelectorConfig(domain=["sensor", "weather"], multiple=False)
+    )
+    schema[
+        vol.Optional(
+            CONF_WEATHER_UNDERGROUND_STATION_ID,
+            default=defaults.get(CONF_WEATHER_UNDERGROUND_STATION_ID, ""),
+        )
+    ] = selector.TextSelector(
+        selector.TextSelectorConfig(type=selector.TextSelectorType.TEXT)
+    )
+    schema[vol.Optional(CONF_WEATHER_UNDERGROUND_API_KEY)] = selector.TextSelector(
+        selector.TextSelectorConfig(type=selector.TextSelectorType.PASSWORD)
     )
 
     return vol.Schema(schema)
@@ -409,7 +498,25 @@ class RachioSupervisorConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             return self.async_abort(reason="no_rachio_entries")
 
         if user_input is not None:
-            self._basic_input = dict(user_input)
+            normalised = _normalise_basic_input(user_input)
+            errors = _basic_input_errors(normalised)
+            if errors:
+                return self.async_show_form(
+                    step_id="user",
+                    data_schema=_flow_schema(
+                        options,
+                        normalised,
+                        moisture_sensor_defaults=discover_moisture_sensor_entities(
+                            self.hass
+                        ),
+                        zone_count_default=discover_zone_count(
+                            self.hass,
+                            options[0][0] if options else None,
+                        ),
+                    ),
+                    errors=errors,
+                )
+            self._basic_input = normalised
             return await self.async_step_policy()
 
         return self.async_show_form(
@@ -582,14 +689,33 @@ class RachioSupervisorOptionsFlow(config_entries.OptionsFlow):
 
     async def async_step_init(self, user_input: dict[str, Any] | None = None):
         """Manage the integration options."""
-        if user_input is not None:
-            self._basic_input = dict(user_input)
-            return await self.async_step_policy()
-
         defaults = {**self._entry.data, **self._entry.options}
         options = rachio_entry_options(self.hass)
         if not options:
             return self.async_abort(reason="no_rachio_entries")
+
+        if user_input is not None:
+            normalised = _normalise_basic_input(user_input, defaults)
+            errors = _basic_input_errors(normalised)
+            if errors:
+                return self.async_show_form(
+                    step_id="init",
+                    data_schema=_flow_schema(
+                        options,
+                        normalised,
+                        moisture_sensor_defaults=discover_moisture_sensor_entities(
+                            self.hass
+                        ),
+                        zone_count_default=discover_zone_count(
+                            self.hass,
+                            normalised.get(CONF_RACHIO_CONFIG_ENTRY_ID),
+                        ),
+                    ),
+                    errors=errors,
+                )
+            self._basic_input = normalised
+            return await self.async_step_policy()
+
         return self.async_show_form(
             step_id="init",
             data_schema=_flow_schema(

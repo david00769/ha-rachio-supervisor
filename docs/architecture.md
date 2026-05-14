@@ -76,6 +76,18 @@ publishes observational rainfall sensors. The source window is exposed
 separately as `24h`, `today`, `since_9am`, `last_hour`, or another explicit
 window so the dashboard does not pretend every source is rolling 24h.
 
+Weather Underground / The Weather Company PWS data fits this model when it is
+first exposed as a Home Assistant sensor, for example by a REST or custom
+integration. The supervisor consumes the resulting observed-rain entity; it
+does not ship a Weather Underground API key.
+
+The supervisor can also own a user-configured Weather Underground PWS override:
+the operator selects the PWS source mode, enters a station ID and API key, and
+the coordinator polls the station's current `precipTotal` directly. Station
+`precipTotal` values are daily totals unless the source explicitly publishes a
+rolling 24h total. This is intentionally a user-selected override, not data
+inferred from the Rachio controller.
+
 Rachio weather data is handled separately. The public forecast endpoint is
 queried to expose source/provider hints and a read-only `Heat assist` weather
 outlook. Rachio forecast payloads are not used as actual rainfall because

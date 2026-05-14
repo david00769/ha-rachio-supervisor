@@ -4,7 +4,7 @@ from __future__ import annotations
 
 DOMAIN = "rachio_supervisor"
 TITLE = "Rachio Supervisor"
-VERSION = "0.2.4"
+VERSION = "0.2.5"
 RACHIO_DOMAIN = "rachio"
 CONF_CLOUDHOOK_URL = "cloudhook_url"
 CONF_WEBHOOK_ID = "webhook_id"
@@ -12,7 +12,10 @@ WEBHOOK_CONST_ID = "homeassistant.rachio:"
 
 CONF_SITE_NAME = "site_name"
 CONF_RACHIO_CONFIG_ENTRY_ID = "rachio_config_entry_id"
+CONF_RAIN_SOURCE_MODE = "rain_source_mode"
 CONF_RAIN_ACTUALS_ENTITY = "rain_actuals_entity"
+CONF_WEATHER_UNDERGROUND_STATION_ID = "weather_underground_station_id"
+CONF_WEATHER_UNDERGROUND_API_KEY = "weather_underground_api_key"
 CONF_AUTO_CATCH_UP_SCHEDULES = "auto_catch_up_schedule_entities"
 CONF_MOISTURE_SENSOR_ENTITIES = "moisture_sensor_entities"
 CONF_SCHEDULE_MOISTURE_MAP = "schedule_moisture_map"
@@ -40,6 +43,10 @@ DEFAULT_SAFE_WINDOW_END_HOUR = 8
 DEFAULT_HEALTH_RECONCILE_HOUR = 12
 DEFAULT_HEALTH_RECONCILE_MINUTE = 15
 DEFAULT_IMPORT_RACHIO_ZONE_PHOTOS = False
+RAIN_SOURCE_MODE_ENTITY = "home_assistant_entity"
+RAIN_SOURCE_MODE_WEATHER_UNDERGROUND = "weather_underground_pws"
+RAIN_SOURCE_MODE_NONE = "none"
+DEFAULT_RAIN_SOURCE_MODE = RAIN_SOURCE_MODE_ENTITY
 
 SERVICE_EVALUATE_NOW = "evaluate_now"
 SERVICE_RUN_CATCH_UP_NOW = "run_catch_up_now"
