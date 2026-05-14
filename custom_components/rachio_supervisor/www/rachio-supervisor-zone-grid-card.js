@@ -793,7 +793,7 @@ class RachioSupervisorZoneGridCard extends HTMLElement {
               ${this._detailRow("Last run", this._timeLabel(zone.last_run_at))}
               ${this._detailRow("Last skip", this._timeLabel(zone.last_skip_at, "none"))}
               ${this._detailRow("Moisture sensor", calibration.moistureEntity || zone.moisture_entity_id || "unmapped")}
-              ${this._detailRow("Last check-in", zone.moisture_source_age_label || "unknown")}
+              ${this._detailRow("Last check-in", this._moistureCheckInLabel(zone))}
               ${this._detailRow("Last valid moisture", this._moistureValueLabel(zone))}
               ${this._detailRow("Freshness", zone.moisture_freshness || "unknown")}
               ${this._detailRow("Confidence", zone.moisture_confidence || "none")}
@@ -1269,8 +1269,8 @@ class RachioSupervisorZoneGridCard extends HTMLElement {
   _moistureLabel(zone) {
     const note = zone.moisture_quality_note || "";
     if (note === "boundary_value_needs_calibration") return "calibrate";
-    if (note === "missing_sensor") return "offline";
-    if (zone.moisture_freshness === "expired") return "offline";
+    if (note === "missing_sensor") return "no sensor";
+    if (zone.moisture_freshness === "expired") return "no sample";
     if (zone.moisture_freshness === "stale") return "stale";
     const value = zone.moisture_observed_value || zone.moisture_value;
     const age = zone.moisture_age_label;
@@ -1283,10 +1283,26 @@ class RachioSupervisorZoneGridCard extends HTMLElement {
     return "moisture";
   }
 
+  _moistureCheckInLabel(zone) {
+    if (!zone.moisture_entity_id) return "unmapped";
+    const value = zone.moisture_observed_value || zone.moisture_value;
+    if (value && !["unknown", "unavailable"].includes(String(value))) {
+      return zone.moisture_source_age_label || zone.moisture_age_label || "unknown";
+    }
+    const sourceState = String(zone.moisture_source_state || "").toLowerCase();
+    const sourceAge = zone.moisture_source_age_label && zone.moisture_source_age_label !== "unknown"
+      ? `entity updated ${zone.moisture_source_age_label} ago`
+      : "entity update unknown";
+    if (["unknown", "unavailable"].includes(sourceState)) {
+      return `No valid sample (${sourceState}; ${sourceAge})`;
+    }
+    return "No valid sample";
+  }
+
   _moistureValueLabel(zone) {
     const value = zone.moisture_observed_value || zone.moisture_value;
     if (!value) {
-      return "none";
+      return "No valid sample";
     }
     const age = zone.moisture_age_label && zone.moisture_age_label !== "unknown"
       ? ` \u00b7 ${zone.moisture_age_label}`
@@ -1299,6 +1315,9 @@ class RachioSupervisorZoneGridCard extends HTMLElement {
     const freshness = zone.moisture_freshness || "unknown";
     const confidence = zone.moisture_confidence || "none";
     const note = zone.moisture_quality_note || "ok";
+    if (freshness === "expired" || note === "missing_sensor") {
+      return `Moisture: no valid sample from ${source}; ${confidence} confidence; ${note}`;
+    }
     return `Moisture: ${source}; ${freshness}; ${confidence} confidence; ${note}`;
   }
 

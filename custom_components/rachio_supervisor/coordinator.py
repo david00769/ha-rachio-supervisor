@@ -1593,7 +1593,7 @@ def apply_moisture_mapping(
             moisture_status = "No explicit moisture sensor is mapped for this schedule."
         elif evidence.quality_note == "sensor_sleeping_or_offline" and write_allowed:
             moisture_status = (
-                "Mapped moisture sensor is offline, using the last valid dated observation."
+                "Mapped moisture sensor is not reporting, using the last valid dated observation."
             )
         elif evidence.quality_note == "non_numeric_state" and write_allowed:
             moisture_status = (
@@ -1756,7 +1756,7 @@ def moisture_action_label(action: str) -> str:
         "write_moisture_now": "Write ready",
         "resolve_write_back": "Resolve Rachio zone",
         "map_moisture_sensor": "Map sensor",
-        "repair_moisture_sensor": "Sensor offline",
+        "repair_moisture_sensor": "Check sensor",
         "calibrate_moisture_sensor": "Calibrate sensor",
         "review_auto_catch_up": "Review catch-up",
         "none": "No write needed",
@@ -1789,7 +1789,7 @@ def moisture_quality_label(quality_note: str | None) -> str:
         "expired_sample": "No recent moisture sample",
         "stale_sample": "Stale moisture sample",
         "boundary_value_needs_calibration": "Calibration review",
-        "sensor_sleeping_or_offline": "Sensor sleeping or offline",
+        "sensor_sleeping_or_offline": "Sensor not reporting",
         "non_numeric_state": "Sensor state is not numeric",
     }.get(quality_note or "", "Evidence ok")
 
@@ -1844,13 +1844,13 @@ def moisture_review_posture(schedule: ScheduleSnapshot) -> tuple[str, int]:
     """Return moisture review copy and sort rank for one schedule."""
     flags = set(schedule.moisture_quality_flags)
     if "missing_sensor" in flags:
-        return "Sensor offline", 3
+        return "Sensor not found", 3
     if "boundary_value_needs_calibration" in flags:
         return "Calibrate sensor", 1
     if schedule.moisture_freshness == "stale":
         return "Stale - no write", 3
     if schedule.moisture_freshness == "expired":
-        return "Sensor offline", 3
+        return "No recent sample", 3
     if schedule.recommended_action == "write_moisture_now":
         if schedule.moisture_freshness == "recent":
             return "Recent sample - confirm before write", 0

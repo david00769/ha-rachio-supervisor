@@ -141,7 +141,7 @@ detail stays below the operator controls.
 The integration ships the `rachio-supervisor-zone-grid-card` Lovelace module
 for this purpose. Add this dashboard resource:
 
-`/rachio_supervisor/rachio-supervisor-zone-grid-card.js?v=0.2.7`
+`/rachio_supervisor/rachio-supervisor-zone-grid-card.js?v=0.2.8`
 
 Resource type:
 
@@ -471,8 +471,8 @@ The operator contract should stay explicit:
 - `Auto` = schedule is off, watching, eligible, or blocked for auto-write
 - `Written` / `Rejected` / `Auto written` / `Auto skipped` = audit trail from
   the last write attempt
-- `Stale - no write`, `Calibrate sensor`, and `Sensor offline` = context only,
-  not write-back candidates
+- `Stale - no write`, `Calibrate sensor`, and `No recent sample` = context
+  only, not write-back candidates
 
 Do not treat moisture drift as automatic top-up watering in v1.
 
@@ -506,6 +506,13 @@ Avoid making `data_quality`, `moisture_quality_note`, or
 `moisture_write_back_ready` the primary visible copy. Those tokens are useful
 for conditional styling, but they read like implementation state when a sensor
 is asleep or stale.
+
+The dashboard should also include a lower-priority native Home Assistant
+history graph for the mapped moisture sensors, typically `hours_to_show: 336`
+for a 14-day view. This chart belongs in the Moisture section below the review
+summary. It should not replace the zone badge, because the badge answers
+whether the current moisture evidence is usable for supervisor decisions while
+the chart answers whether the physical sensors have been reporting over time.
 
 If the Rachio public API does not expose the current zone moisture estimate,
 the dashboard must say `not reported` instead of inventing a comparison.

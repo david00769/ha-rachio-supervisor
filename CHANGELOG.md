@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.2.8 - 2026-05-14
+
+- Changed moisture badge and review copy from definitive `offline` language to
+  `no sample` / `not reporting` language when Home Assistant has no usable
+  numeric moisture sample.
+- Documented the dashboard contract for a lower-priority 14-day moisture
+  history graph below the moisture review surface.
+
 ## 0.2.7 - 2026-05-14
 
 - Changed Rachio zone-photo import so large source images can be downloaded up

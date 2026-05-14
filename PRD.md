@@ -298,7 +298,8 @@ sections:
 2. `Weather` for rain skip, actual observed rain, read-only heat/weather
    outlook, and catch-up/top-up posture
 3. `Moisture` for mapped sensor state, `HA sensor -> Rachio` write summaries,
-   manual write, and auto-write status
+   manual write, auto-write status, and a lower-priority history graph for the
+   mapped moisture sensors
 4. `Flow` for the 7-day flow alert queue, calibration evidence, baseline delta,
    and clear-review action
 5. `Audit` for health, webhook state, raw strings, queues, parity detail, and
@@ -309,6 +310,9 @@ For moisture specifically:
 - first viewport should only surface moisture when drift has become actionable
 - the main moisture section should answer whether measured soil moisture is far
   enough from Rachio's posture to justify a write-back
+- the moisture history graph should show whether mapped HA sensors have been
+  reporting over time, but it should sit below the review surface instead of
+  turning the primary dashboard into raw telemetry
 - zone detail should only show mapped sensor, current band, and a short posture
   note, with calibration controls kept in the detail layer
 - conservative watch zones should remain visibly non-autonomous
@@ -441,6 +445,7 @@ The dashboard package should include:
   static URL with an upgrade-safe version query
 - current site status in Audit and as zone/weather/moisture/flow badges
 - moisture + rain context
+- a native Home Assistant history graph for mapped moisture sensors
 - simple dashboard-assisted moisture sensor calibration
 - review queue / actions
 
