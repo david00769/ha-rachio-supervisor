@@ -7,6 +7,7 @@ surface the current coordinator and service helpers import.
 from __future__ import annotations
 
 import asyncio
+import json
 from dataclasses import dataclass, replace
 from datetime import datetime, timezone
 import importlib
@@ -2793,6 +2794,23 @@ class RuntimeHealthAndMoistureTests(unittest.TestCase):
                 / "zone-placeholder.svg"
             ).exists()
         )
+
+    def test_docs_use_installed_card_resource_version(self) -> None:
+        manifest_path = (
+            REPO_ROOT / "custom_components" / "rachio_supervisor" / "manifest.json"
+        )
+        version = json.loads(manifest_path.read_text())["version"]
+        resource_url = (
+            f"/rachio_supervisor/rachio-supervisor-zone-grid-card.js?v={version}"
+        )
+
+        for relative_path in (
+            "README.md",
+            "docs/architecture.md",
+            "docs/dashboard-package.md",
+        ):
+            with self.subTest(path=relative_path):
+                self.assertIn(resource_url, (REPO_ROOT / relative_path).read_text())
 
     def test_apply_moisture_mapping_marks_auto_write_eligibility(self) -> None:
         schedule = ScheduleSnapshot(

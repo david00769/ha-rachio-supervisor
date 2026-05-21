@@ -403,7 +403,9 @@ grid:
 - `Flow review` owns the 7-day flow alert queue, calibration evidence, baseline
   deltas, and clear-review actions
 - `Rachio Supervisor` owns runtime health, webhook health, data warnings, and
-  the compact running log
+  the compact running log. Dashboard overlays should prefer the health
+  entity's `data_warning_summary`, `data_warning_count`, and structured
+  `data_warnings` attributes over raw `missing_inputs` tokens.
 
 This rail is where future optional alerting should anchor. Alerts should follow
 the same priorities:
@@ -593,6 +595,13 @@ UI rules for flow-alert handling:
 - the UI should show the baseline comparison explicitly before any clear action
 - the clear action copy should say `Clear review`, not imply that the native
   Rachio alert itself is being dismissed
+- unmatched pending Rachio flow alerts should still appear in the zone grid or
+  flow review as review-only items, even when the supervisor cannot associate
+  the alert with a current schedule row
+- flow-alert details should show `native_alert_clear_api_available` and
+  `native_alert_clear_note`/`native_clear_status` where available, so operators
+  understand that clearing Supervisor review does not dismiss Rachio's native
+  in-app alert
 
 The example YAML should now be treated as a near-term operator contract built
 around the shipped entity model, not around a future generic zone abstraction.

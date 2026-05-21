@@ -113,9 +113,16 @@ still keeping the default install observe-first:
   freshness, confidence, source state, and quality notes so sleeping MQTT/
   Zigbee probes do not erase useful evidence
 - the supervisor now inspects recent Rachio event history for low-flow and
-  high-flow alerts across the 7-day inspection window, compares later native calibration events against the prior
-  baseline when both are present, and clears the Supervisor-side review queue
-  when the post-alert baseline remains stable
+  high-flow alerts across the 7-day inspection window, compares later native
+  calibration events against the prior baseline when both are present, and
+  keeps the Supervisor-side review queue visible until an eligible item is
+  explicitly cleared
+- unmatched pending Rachio flow alerts are still surfaced as review-only zone
+  overview items instead of being hidden just because no current schedule row
+  matched the event text
+- site-level health attributes include `data_warning_summary`,
+  `data_warning_count`, and structured `data_warnings` so dashboards can show
+  operator-readable setup warnings without exposing raw internal flags
 - schedule policy now distinguishes between:
   - automatic catch-up after weather skip
   - automatic missed-run recovery

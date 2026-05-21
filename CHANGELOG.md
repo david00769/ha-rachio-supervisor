@@ -1,5 +1,19 @@
 # Changelog
 
+## Unreleased
+
+- Added human-readable site-level data-warning attributes for dashboard
+  overlays: `data_warning_summary`, `data_warning_count`, and structured
+  `data_warnings` entries. Moisture sensor warnings are grouped by operator
+  action instead of exposing raw internal `missing_inputs` tokens.
+- Kept flow-alert review visible even when a pending Rachio alert cannot be
+  matched to a current schedule row, so the zone grid does not silently hide an
+  unresolved native flow warning.
+- Exposed the native Rachio alert-clear boundary on flow-alert sensor
+  attributes. Supervisor review items can be cleared after normal calibration
+  evidence, but native Rachio in-app alert dismissal remains unsupported by the
+  documented public API.
+
 ## 0.2.11 - 2026-05-14
 
 - Treat mapped moisture sensors with expired, stale, unknown, unavailable, or
