@@ -283,6 +283,10 @@ class FlowAlertSnapshot:
     calibration_at: str | None
     review_state: str
     summary: str
+    native_clear_status: str = "not_supported_by_public_api"
+    native_clear_note: str = (
+        "Rachio's documented public API does not expose an endpoint to dismiss native app alerts."
+    )
 
 
 @dataclass(slots=True)
@@ -2255,6 +2259,7 @@ def build_zone_overview_items(
 ) -> tuple[dict[str, object], ...]:
     """Build compact, visual zone rows for dashboard use."""
     items: list[dict[str, object]] = []
+    matched_flow_alert_rule_ids: set[str] = set()
     for index, schedule in enumerate(schedules, start=1):
         slug = "-".join(sorted(normalize_words(schedule.name))) or f"zone-{index}"
         local_image_path = _existing_local_zone_image_path(hass, slug)
@@ -2316,6 +2321,8 @@ def build_zone_overview_items(
             if state is not None:
                 schedule_state = str(state.state)
         flow_alert = _matching_flow_alert(schedule, flow_alerts)
+        if flow_alert:
+            matched_flow_alert_rule_ids.add(flow_alert.rule_id)
         flow_alert_state = flow_alert.status if flow_alert else "none"
         rain_skip_state = _rain_skip_state(schedule)
         if schedule.last_skip_at:
@@ -2387,6 +2394,62 @@ def build_zone_overview_items(
                 "runtime_minutes": schedule.runtime_minutes,
                 "plant_note": plant_note or "",
                 "detail_note": detail_note or schedule.summary,
+            }
+        )
+    for alert in flow_alerts:
+        if (
+            alert.review_state != "pending_review"
+            or alert.rule_id in matched_flow_alert_rule_ids
+        ):
+            continue
+        items.append(
+            {
+                "zone_name": alert.zone_name,
+                "schedule_name": "",
+                "schedule_entity_id": None,
+                "zone_entity_id": None,
+                "image_path": ZONE_PLACEHOLDER_PATH,
+                "image_source": "flow_alert_unmatched",
+                "suggested_image_path": "",
+                "fallback_image_path": ZONE_PLACEHOLDER_PATH,
+                "rachio_image_available": False,
+                "photo_import_status": "missing",
+                "photo_import_reason": "No matched supervisor schedule row for this active flow alert.",
+                "quick_run_minutes": None,
+                "schedule_state": "unmatched",
+                "next_run": "not_reported",
+                "watering_days": [],
+                "last_run_at": None,
+                "last_skip_at": None,
+                "rain_skip_state": "none",
+                "water_badge": "watch",
+                "water_icon": "mdi:calendar-alert",
+                "supervisor_badge": "flow",
+                "supervisor_icon": "mdi:pipe-leak",
+                "moisture_band": "unmapped",
+                "moisture_value": None,
+                "moisture_observed_value": None,
+                "moisture_observed_at": None,
+                "moisture_age_label": "unknown",
+                "moisture_freshness": "expired",
+                "moisture_confidence": "none",
+                "moisture_quality_note": None,
+                "moisture_quality_flags": [],
+                "moisture_source_state": None,
+                "moisture_source_last_updated": None,
+                "moisture_source_age_label": "unknown",
+                "moisture_sampling_interval_seconds": None,
+                "moisture_entity_id": None,
+                "flow_alert_state": alert.status,
+                "flow_review_state": alert.status,
+                "flow_alert_rule_id": alert.rule_id,
+                "flow_alert_kind": alert.alert_kind,
+                "flow_alert_at": alert.alert_at,
+                "policy_mode": "review",
+                "runtime_minutes": None,
+                "plant_note": "Flow alert needs review",
+                "detail_note": alert.reason,
+                "review_item_type": "unmatched_flow_alert",
             }
         )
     return tuple(items)

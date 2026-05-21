@@ -498,6 +498,8 @@ class RachioSupervisorZoneGridCard extends HTMLElement {
     const moisture = this._state(this.config.moisture_entity);
     const flow = this._state(this.config.flow_entity);
     const missingInputs = health.attributes?.missing_inputs || [];
+    const dataWarningSummary = health.attributes?.data_warning_summary || "";
+    const dataWarningCount = Number.parseInt(health.attributes?.data_warning_count || "0", 10) || missingInputs.length;
     const reason = health.attributes?.supervisor_reason || health.state || "not reported";
     const moistureCount = Number.parseInt(moisture.state || "0", 10) || 0;
     const flowCount = Number.parseInt(flow.state || "0", 10) || 0;
@@ -527,6 +529,8 @@ class RachioSupervisorZoneGridCard extends HTMLElement {
       flowCount,
       reason,
       missingInputs,
+      dataWarningSummary,
+      dataWarningCount,
     };
   }
 
@@ -580,8 +584,8 @@ class RachioSupervisorZoneGridCard extends HTMLElement {
     if (supervisor.flowCount > 0) {
       pills.push(this._badge("mdi:pipe-leak", String(supervisor.flowCount), "issue", `Active flow alerts: ${supervisor.flowCount}`));
     }
-    if (Array.isArray(supervisor.missingInputs) && supervisor.missingInputs.length && !supervisor.issue && !supervisor.unknown) {
-      pills.push(this._badge("mdi:database-alert-outline", String(supervisor.missingInputs.length), "warn", this._dataWarningDetail(supervisor.missingInputs)));
+    if (supervisor.dataWarningCount > 0 && !supervisor.issue && !supervisor.unknown) {
+      pills.push(this._badge("mdi:database-alert-outline", String(supervisor.dataWarningCount), "warn", supervisor.dataWarningSummary || this._dataWarningDetail(supervisor.missingInputs)));
     }
     return `
       <div class="supervisor-pills">
@@ -597,8 +601,8 @@ class RachioSupervisorZoneGridCard extends HTMLElement {
     if (supervisor.unknown) {
       return "Supervisor entities are not reporting yet.";
     }
-    if (Array.isArray(supervisor.missingInputs) && supervisor.missingInputs.length) {
-      return this._dataWarningSummary(supervisor.missingInputs);
+    if (supervisor.dataWarningCount > 0 || (Array.isArray(supervisor.missingInputs) && supervisor.missingInputs.length)) {
+      return supervisor.dataWarningSummary || this._dataWarningSummary(supervisor.missingInputs);
     }
     if (supervisor.flowCount > 0) {
       return "Flow alert review is active.";

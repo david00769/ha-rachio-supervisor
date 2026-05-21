@@ -63,6 +63,101 @@ PHOTO_IMPORT_STATUSES = (
 )
 
 
+def _format_list(values: list[str]) -> str:
+    """Return a short human list for attribute summaries."""
+    if not values:
+        return ""
+    if len(values) == 1:
+        return values[0]
+    if len(values) == 2:
+        return f"{values[0]} and {values[1]}"
+    return f"{', '.join(values[:-1])}, and {values[-1]}"
+
+
+def _moisture_problem_action(reason: str) -> str:
+    """Return an operator action phrase for one moisture quality reason."""
+    labels = {
+        "stale_sample": "a fresh check-in",
+        "expired_sample": "a fresh check-in",
+        "sensor_missing": "sensor repair",
+        "missing": "sensor repair",
+        "boundary_value_needs_calibration": "calibration",
+        "missing_companion_health_data": "health context",
+    }
+    return labels.get(reason, "review")
+
+
+def _human_data_warnings(missing_inputs: tuple[str, ...]) -> tuple[dict[str, str], ...]:
+    """Translate internal warning keys into operator-facing copy."""
+    moisture_problems: list[tuple[str, str]] = []
+    other_warnings: list[dict[str, str]] = []
+    labels = {
+        "no_active_schedule_moisture_mappings": "No active moisture sensor mappings are configured.",
+        "rain_actuals_unconfigured": "Observed rain source is not configured.",
+        "rain_actuals_missing": "Configured observed rain sensor is missing.",
+        "rain_actuals_unavailable": "Observed rain sensor is unavailable.",
+        "rain_actuals_rate_only": "Observed rain source reports rate only, not a rainfall total.",
+        "rain_actuals_weather_no_observed_precipitation": "Weather entity does not report observed rainfall.",
+        "rain_actuals_non_numeric": "Observed rain source is not reporting a number.",
+        "rain_actuals_weather_station_unconfigured": "Weather station source is not configured.",
+        "rain_actuals_weather_station_invalid": "Weather station ID is invalid.",
+        "rain_actuals_weather_station_api_key_missing": "Weather station API key is missing.",
+        "rain_actuals_weather_station_unavailable": "Weather station rainfall is unavailable.",
+        "rain_actuals_weather_station_precip_total_missing": "Weather station is not reporting a rainfall total.",
+    }
+    for raw in missing_inputs:
+        warning = str(raw)
+        prefix = "moisture_sensor_problem:"
+        if warning.startswith(prefix):
+            body = warning[len(prefix):]
+            separator = body.rfind(":")
+            if separator >= 0:
+                moisture_problems.append((body[:separator], body[separator + 1:]))
+            else:
+                moisture_problems.append((body, "attention"))
+            continue
+        label = labels.get(warning, warning.replace("_", " ").capitalize())
+        other_warnings.append({"short": label, "summary": label, "detail": label})
+
+    grouped: list[dict[str, str]] = []
+    if moisture_problems:
+        zones = [zone for zone, _reason in moisture_problems if zone]
+        reasons = {reason for _zone, reason in moisture_problems if reason}
+        action = (
+            _moisture_problem_action(next(iter(reasons)))
+            if len(reasons) == 1
+            else "review"
+        )
+        count = len(zones) or len(moisture_problems)
+        grouped.append(
+            {
+                "short": f"{count} moisture sensors need {action}.",
+                "summary": (
+                    f"Moisture sensor for {zones[0]} needs {action}."
+                    if count == 1 and zones
+                    else f"{count} moisture sensors need {action}."
+                ),
+                "detail": (
+                    f"Moisture sensors need {action}: {_format_list(zones)}."
+                    if zones
+                    else f"Moisture sensors need {action}."
+                ),
+            }
+        )
+    grouped.extend(other_warnings)
+    return tuple(grouped)
+
+
+def _data_warning_summary(missing_inputs: tuple[str, ...]) -> str:
+    """Return compact warning text for generic Home Assistant cards."""
+    warnings = _human_data_warnings(missing_inputs)
+    if not warnings:
+        return ""
+    if len(warnings) == 1:
+        return warnings[0]["summary"]
+    return " ".join(warning["short"] for warning in warnings)
+
+
 def _format_at_local(value: str | None) -> str:
     """Format one ISO timestamp for compact local display."""
     if not value or value == "never":
@@ -401,11 +496,15 @@ class RachioSupervisorSensor(RachioSupervisorEntity, SensorEntity):
         """Return contextual attributes for the current sensor."""
         data = self.coordinator.data
         if self.entity_description.key == "health":
+            data_warnings = _human_data_warnings(data.missing_inputs)
             return {
                 "plain_english": "Overall supervisor runtime integrity: linked entry, webhook registration, event freshness, and reconcile/API health.",
                 "supervisor_mode": data.supervisor_mode,
                 "supervisor_reason": data.supervisor_reason,
                 "data_completeness": data.data_completeness,
+                "data_warning_count": len(data_warnings),
+                "data_warning_summary": _data_warning_summary(data.missing_inputs),
+                "data_warnings": list(data_warnings),
                 "missing_inputs": list(data.missing_inputs),
                 "runtime_integrity": data.runtime_integrity,
                 "linked_entry_title": data.linked_entry_title,
@@ -515,9 +614,15 @@ class RachioSupervisorSensor(RachioSupervisorEntity, SensorEntity):
                 ),
             }
         if self.entity_description.key == "configured_zone_count":
+            discovered_schedule_count = len(
+                data.discovered_entities.get("schedule_switches", ())
+                if isinstance(data.discovered_entities, dict)
+                else ()
+            )
             return {
                 "expected_zone_count": data.zone_count,
-                "discovered_schedule_count": data.active_schedule_count,
+                "discovered_schedule_count": discovered_schedule_count,
+                "active_schedule_count": data.active_schedule_count,
                 "discovered_entities": data.discovered_entities,
             }
         if self.entity_description.key == "last_reconciliation":
@@ -635,6 +740,16 @@ class RachioSupervisorSensor(RachioSupervisorEntity, SensorEntity):
                         "last_checked_at": data.last_reconciliation,
                         "review_state": alert.review_state,
                         "summary": alert.summary,
+                        "native_clear_status": getattr(
+                            alert,
+                            "native_clear_status",
+                            "not_supported_by_public_api",
+                        ),
+                        "native_clear_note": getattr(
+                            alert,
+                            "native_clear_note",
+                            "Rachio's documented public API does not expose an endpoint to dismiss native app alerts.",
+                        ),
                     }
                     for alert in self.coordinator._cached_evidence.flow_alert_snapshots
                 ]
@@ -645,6 +760,8 @@ class RachioSupervisorSensor(RachioSupervisorEntity, SensorEntity):
                 "flow_alerts": alerts,
                 "normal_tolerance_percent": 15,
                 "native_calibration_api_available": False,
+                "native_alert_clear_api_available": False,
+                "native_alert_clear_note": "Rachio's documented public API does not expose an endpoint to dismiss native in-app flow alerts; it only exposes webhook notification management.",
             }
         return None
 

@@ -379,6 +379,8 @@ Important boundary:
 - the product may clear the **Supervisor review item**
 - it does not claim to clear the native vendor alert in Rachio unless the public
   API supports that in the future
+- native Rachio app alert dismissal must be shown as unsupported/out-of-band
+  while the documented API lacks an alert-dismiss endpoint
 - zone association and baseline association may need to be inferred from Rachio
   event text, so the product should prefer false-negative review retention over
   false-positive auto-clear

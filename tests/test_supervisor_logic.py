@@ -2525,6 +2525,59 @@ class RuntimeHealthAndMoistureTests(unittest.TestCase):
         self.assertEqual(items[0]["detail_note"], "Drip line, flat, every second day")
         self.assertEqual(items[0]["water_badge"], "watered")
 
+    def test_zone_overview_adds_unmatched_pending_flow_alert(self) -> None:
+        schedule = ScheduleSnapshot(
+            rule_id="rule-1",
+            name="Pots - Dawn Micro",
+            status="completed_recently",
+            reason="ran",
+            catch_up_candidate="not_needed",
+            policy_mode="observe_only",
+            policy_basis="default",
+            schedule_entity_id="switch.schedule_pots",
+            zone_entity_id="switch.zone_pots",
+            controller_zone_id="zone-1",
+            moisture_entity_id=None,
+            moisture_value=None,
+            moisture_band="unmapped",
+            moisture_status="pending",
+            moisture_write_back_ready="ready",
+            recommended_action="none",
+            review_state="none",
+            runtime_minutes=3,
+            last_run_at=None,
+            last_skip_at=None,
+            summary="ran",
+            threshold_mm=None,
+            observed_mm=None,
+        )
+        hass = SimpleNamespace(states=SimpleNamespace(get=lambda entity_id: None))
+        flow_alert = FlowAlertSnapshot(
+            rule_id="flow-1",
+            zone_name="Rear Murraya Hedge + Pool Deck Pots",
+            alert_kind="low_flow",
+            alert_at="2026-05-21T05:17:00+10:00",
+            alert_summary="Low flow in Rear Murraya Hedge + Pool Deck Pots",
+            status="calibration_required",
+            reason="A flow alert was seen and no later calibration baseline was found.",
+            recommended_action="run_native_calibration",
+            baseline_before_lpm=None,
+            baseline_after_lpm=None,
+            baseline_delta_percent=None,
+            calibration_at=None,
+            review_state="pending_review",
+            summary="Rear Murraya Hedge + Pool Deck Pots: low flow alert",
+        )
+
+        items = build_zone_overview_items(hass, (schedule,), (flow_alert,))
+
+        self.assertEqual(len(items), 2)
+        self.assertEqual(items[1]["review_item_type"], "unmatched_flow_alert")
+        self.assertEqual(items[1]["zone_name"], "Rear Murraya Hedge + Pool Deck Pots")
+        self.assertEqual(items[1]["supervisor_badge"], "flow")
+        self.assertEqual(items[1]["flow_alert_state"], "calibration_required")
+        self.assertIsNone(items[1]["zone_entity_id"])
+
     def test_zone_overview_ignores_stale_imported_cache_when_import_disabled(self) -> None:
         schedule = ScheduleSnapshot(
             rule_id="rule-1",
@@ -3772,6 +3825,33 @@ class DiagnosticsAndEntityTests(unittest.TestCase):
         )
         self.assertEqual(len(attrs["zones"]), 7)
 
+    def test_configured_zone_sensor_separates_discovered_and_active_schedules(self) -> None:
+        snapshot = replace(
+            self._snapshot(),
+            active_schedule_count=0,
+            discovered_entities={
+                "schedule_switches": (
+                    "switch.schedule_pots",
+                    "switch.schedule_lawn",
+                ),
+                "entity_count": 12,
+            },
+        )
+        coordinator = SimpleNamespace(
+            entry=SimpleNamespace(entry_id="entry-1", title="Demo Site"),
+            data=snapshot,
+            _cached_evidence=None,
+        )
+        description = next(
+            item for item in sensor_module.DESCRIPTIONS if item.key == "configured_zone_count"
+        )
+
+        entity = sensor_module.RachioSupervisorSensor(coordinator, description)
+        attrs = entity.extra_state_attributes
+
+        self.assertEqual(attrs["discovered_schedule_count"], 2)
+        self.assertEqual(attrs["active_schedule_count"], 0)
+
     def test_health_sensor_exposes_runtime_and_data_completeness(self) -> None:
         snapshot = self._snapshot()
         coordinator = SimpleNamespace(
@@ -3792,6 +3872,90 @@ class DiagnosticsAndEntityTests(unittest.TestCase):
             entity.extra_state_attributes["missing_inputs"],
             ["rain_actuals_unconfigured"],
         )
+        self.assertEqual(
+            entity.extra_state_attributes["data_warning_summary"],
+            "Observed rain source is not configured.",
+        )
+        self.assertEqual(
+            entity.extra_state_attributes["data_warnings"][0]["summary"],
+            "Observed rain source is not configured.",
+        )
+
+    def test_health_sensor_groups_moisture_warnings_for_humans(self) -> None:
+        snapshot = replace(
+            self._snapshot(),
+            missing_inputs=(
+                "moisture_sensor_problem:Boxwood + Liriope:stale_sample",
+                "moisture_sensor_problem:Driveway Hedge:stale_sample",
+            ),
+        )
+        coordinator = SimpleNamespace(
+            entry=SimpleNamespace(entry_id="entry-1", title="Demo Site"),
+            data=snapshot,
+            _cached_evidence=None,
+        )
+        description = next(
+            item for item in sensor_module.DESCRIPTIONS if item.key == "health"
+        )
+
+        entity = sensor_module.RachioSupervisorSensor(coordinator, description)
+        attrs = entity.extra_state_attributes
+
+        self.assertEqual(attrs["data_warning_count"], 1)
+        self.assertEqual(
+            attrs["data_warning_summary"],
+            "2 moisture sensors need a fresh check-in.",
+        )
+        self.assertEqual(
+            attrs["data_warnings"][0]["detail"],
+            "Moisture sensors need a fresh check-in: Boxwood + Liriope and Driveway Hedge.",
+        )
+
+    def test_flow_alert_sensor_exposes_native_clear_boundary(self) -> None:
+        snapshot = replace(
+            self._snapshot(),
+            active_flow_alert_count=1,
+            flow_alert_queue="Front Lawn",
+            last_flow_alert_decision="2026-05-09 10:00|low_flow|Front Lawn|normal_after_calibration",
+        )
+        evidence = SimpleNamespace(
+            flow_alert_snapshots=(
+                FlowAlertSnapshot(
+                    rule_id="flow-1",
+                    zone_name="Front Lawn",
+                    alert_kind="low_flow",
+                    alert_at="2026-05-09T10:00:00",
+                    alert_summary="Low flow in Front Lawn.",
+                    status="normal_after_calibration",
+                    reason="Post-alert calibration is within the stable-baseline tolerance.",
+                    recommended_action="clear_review",
+                    baseline_before_lpm=10.0,
+                    baseline_after_lpm=10.2,
+                    baseline_delta_percent=2.0,
+                    calibration_at="2026-05-09T10:05:00",
+                    review_state="pending_review",
+                    summary="Front Lawn: low flow alert -> normal_after_calibration",
+                ),
+            )
+        )
+        coordinator = SimpleNamespace(
+            entry=SimpleNamespace(entry_id="entry-1", title="Demo Site"),
+            data=snapshot,
+            _cached_evidence=evidence,
+        )
+        description = next(
+            item for item in sensor_module.DESCRIPTIONS if item.key == "active_flow_alert_count"
+        )
+
+        entity = sensor_module.RachioSupervisorSensor(coordinator, description)
+        attrs = entity.extra_state_attributes
+
+        self.assertFalse(attrs["native_alert_clear_api_available"])
+        self.assertEqual(
+            attrs["flow_alerts"][0]["native_clear_status"],
+            "not_supported_by_public_api",
+        )
+        self.assertIn("does not expose", attrs["native_alert_clear_note"])
 
     def test_heat_assist_sensor_exposes_read_only_weather_outlook(self) -> None:
         snapshot = replace(

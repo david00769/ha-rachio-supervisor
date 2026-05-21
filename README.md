@@ -201,8 +201,12 @@ That means:
 - `problem_suspected` stays active when the new baseline moved materially
 - only `normal_after_calibration` is eligible for `clear_flow_alert_review`
 
-The current product only clears the Supervisor-side review item. It does not
-claim to dismiss or repair the native Rachio alert itself.
+The current product only clears the Supervisor-side review item. Rachio's
+documented public API exposes webhook notification management, but no endpoint
+to dismiss native in-app flow alerts. When flow has been debugged and the
+post-alert calibration is normal, the Supervisor exposes that the review item is
+eligible to clear and records the native app clear as a manual/out-of-band step
+until Rachio publishes an alert-dismiss API.
 
 Zone and baseline matching are still inferred from Rachio event text. The
 runtime should therefore stay conservative: if the evidence chain is ambiguous,
