@@ -13,6 +13,11 @@
   attributes. Supervisor review items can be cleared after normal calibration
   evidence, but native Rachio in-app alert dismissal remains unsupported by the
   documented public API.
+- Auto-clear Supervisor-side flow-alert review items after a later native Rachio
+  calibration baseline is found within tolerance, and post an operator notice
+  explaining that the review was auto-cleared after investigation. Native
+  calibration still must be run in Rachio because the documented public API does
+  not expose a calibration command.
 
 ## 0.2.11 - 2026-05-14
 
@@ -176,7 +181,10 @@
 - Added the twelfth runtime milestone: the supervisor now exposes generic parity surfaces for `last event`, `last reconciliation`, `observed rain 24h`, `catch-up evidence`, `last catch-up decision`, and `supervisor mode`; policy configuration now distinguishes automatic weather-skip catch-up from missed-run recovery; and the coordinator now keeps a narrow supervision loop with health transitions, notification support, and opt-in catch-up execution.
 - Added the thirteenth runtime milestone: the setup/options flow now supports a cleaner shadow-install path by treating rain actuals and moisture candidates as optional inputs, skipping the moisture-mapping step when no candidates were selected, avoiding invalid empty rain defaults, and linking the built-in `rachio` entry through either entity-registry `config_entry_ids` or legacy `config_entry_id` rows.
 - Added the fourteenth runtime milestone: the supervisor now detects recent low-flow/high-flow alert events, compares later native calibration baselines against the prior baseline when available, exposes flow-alert review sensors, and adds a `clear_flow_alert_review` service for Supervisor-side review cleanup. Native Rachio calibration execution remains outside the public API boundary.
-- Tightened the flow-alert review gate: `normal_after_calibration` no longer auto-clears. The Supervisor now requires an explicit clear step, and that clear step is only allowed after a stable post-alert calibration comparison.
+- Tightened the flow-alert review gate around evidence quality: Supervisor review
+  may only clear after a stable post-alert calibration comparison, while
+  `calibration_required`, `calibrated_needs_review`, and `problem_suspected`
+  remain active.
 - Fixed a shadow-install naming bug where site-level diagnostic sensors could be registered without names and end up with generic entity ids such as `sensor.sugarloaf_8`.
 - Expanded the deterministic test harness so local coverage now includes config-flow optional-input behavior, options-flow moisture mapping, site-level entity naming/state exposure, and diagnostics payload shape.
 - Replaced the stale dashboard example with the accepted live irrigation layout using stable `sensor.rachio_site_*` entities.

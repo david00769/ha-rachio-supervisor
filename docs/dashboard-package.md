@@ -368,7 +368,7 @@ Strengths:
 
 - the first viewport now answers the key operator questions quickly
 - moisture is presented as drift and review, not a raw telemetry wall
-- flow alerts have a dedicated review band with explicit clear gating
+- flow alerts have a dedicated review band with evidence-gated clear behavior
 - Rear Protea Shade Bed is framed conservatively instead of as a routine
   top-up candidate
 
@@ -584,17 +584,18 @@ Interaction thesis:
 - the alert queue should collapse to a terse healthy state when empty
 - one tap should reveal baseline-before, baseline-after, delta, calibration
   time, and recommended action
-- clear actions should feel gated and deliberate, not like casual dismiss chips
+- auto-clear notices should show the baseline comparison that justified the
+  Supervisor-side clear
 
 UI rules for flow-alert handling:
 
 - `calibration_required`, `calibrated_needs_review`, and `problem_suspected`
   should remain visually active in the review rail
-- `normal_after_calibration` should present as **eligible to clear**, not as
-  already resolved
-- the UI should show the baseline comparison explicitly before any clear action
-- the clear action copy should say `Clear review`, not imply that the native
-  Rachio alert itself is being dismissed
+- `normal_after_calibration` should present as auto-cleared by Supervisor after
+  investigation, not as an unresolved active fault
+- the UI should show the baseline comparison explicitly in the auto-clear notice
+- any manual fallback clear action copy should say `Clear review`, not imply
+  that the native Rachio alert itself is being dismissed
 - unmatched pending Rachio flow alerts should still appear in the zone grid or
   flow review as review-only items, even when the supervisor cannot associate
   the alert with a current schedule row
@@ -602,6 +603,9 @@ UI rules for flow-alert handling:
   `native_alert_clear_note`/`native_clear_status` where available, so operators
   understand that clearing Supervisor review does not dismiss Rachio's native
   in-app alert
+- flow-alert details should also keep `native_calibration_api_available` visible
+  so operators understand that native calibration must still be run through
+  Rachio until the public API exposes a calibration command
 
 The example YAML should now be treated as a near-term operator contract built
 around the shipped entity model, not around a future generic zone abstraction.

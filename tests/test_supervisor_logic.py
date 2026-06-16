@@ -914,6 +914,27 @@ class FlowAlertClearTests(unittest.TestCase):
 
         self.assertEqual(coordinator._acknowledged_flow_alert_ids, {"rule-2"})
 
+    def test_coordinator_auto_clears_stable_post_calibration_review(self) -> None:
+        coordinator = self._coordinator_with_snapshots(
+            _FakeSnapshot(rule_id="rule-1", status="calibration_required"),
+            _FakeSnapshot(rule_id="rule-2", status="normal_after_calibration"),
+        )
+
+        cleared = coordinator._auto_clear_stable_flow_alert_reviews(
+            coordinator._cached_evidence.flow_alert_snapshots
+        )
+
+        self.assertEqual([alert.rule_id for alert in cleared], ["rule-2"])
+        self.assertEqual(coordinator._acknowledged_flow_alert_ids, {"rule-2"})
+        self.assertEqual(
+            coordinator._cached_evidence.flow_alert_snapshots[0].review_state,
+            "pending_review",
+        )
+        self.assertEqual(
+            coordinator._cached_evidence.flow_alert_snapshots[1].review_state,
+            "cleared",
+        )
+
     def test_service_wrapper_rejects_non_eligible_status(self) -> None:
         coordinator = self._coordinator_with_snapshots(
             _FakeSnapshot(rule_id="rule-1", status="calibration_required")

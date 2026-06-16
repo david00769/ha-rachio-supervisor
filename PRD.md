@@ -367,8 +367,8 @@ Required v1 lifecycle:
    any clear is possible
 3. compare the post-alert baseline against the most recent pre-alert baseline
    when both are available
-4. only mark the alert as eligible to clear when the post-alert baseline is
-   within the configured stable-baseline tolerance
+4. auto-clear the Supervisor review item when the post-alert baseline is within
+   the configured stable-baseline tolerance
 5. keep the alert in review when:
    - calibration has not happened yet
    - no earlier comparable baseline exists
@@ -379,8 +379,11 @@ Important boundary:
 - the product may clear the **Supervisor review item**
 - it does not claim to clear the native vendor alert in Rachio unless the public
   API supports that in the future
-- native Rachio app alert dismissal must be shown as unsupported/out-of-band
-  while the documented API lacks an alert-dismiss endpoint
+- native Rachio app calibration execution and native alert dismissal must be
+  shown as unsupported/out-of-band while the documented API lacks calibration
+  and alert-dismiss endpoints
+- stable post-calibration auto-clear must create an operator-visible notice that
+  the Supervisor review item was auto-cleared after investigation
 - zone association and baseline association may need to be inferred from Rachio
   event text, so the product should prefer false-negative review retention over
   false-positive auto-clear

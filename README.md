@@ -114,9 +114,9 @@ still keeping the default install observe-first:
   Zigbee probes do not erase useful evidence
 - the supervisor now inspects recent Rachio event history for low-flow and
   high-flow alerts across the 7-day inspection window, compares later native
-  calibration events against the prior baseline when both are present, and
-  keeps the Supervisor-side review queue visible until an eligible item is
-  explicitly cleared
+  calibration events against the prior baseline when both are present,
+  auto-clears the Supervisor-side review item when the post-calibration baseline
+  is within tolerance, and keeps ambiguous cases visible for review
 - unmatched pending Rachio flow alerts are still surfaced as review-only zone
   overview items instead of being hidden just because no current schedule row
   matched the event text
@@ -158,8 +158,8 @@ The deeper irrigation logic is still pending:
   Assistant overrides, but the packaged placeholder is always available
 - native flow calibration execution through Rachio is not implemented because
   Rachio's public API does not currently expose the native calibration command
-  or calibrated-flow fields; the Supervisor can verify and clear its own review
-  state after a calibration event appears in Rachio history
+  or calibrated-flow fields; the Supervisor can verify and auto-clear its own
+  review state after a calibration event appears in Rachio history
 
 ## Local verification bar
 
@@ -206,14 +206,18 @@ That means:
 - `calibrated_needs_review` stays active when there is no earlier comparable
   baseline
 - `problem_suspected` stays active when the new baseline moved materially
-- only `normal_after_calibration` is eligible for `clear_flow_alert_review`
+- `normal_after_calibration` is auto-cleared by the Supervisor and remains
+  eligible for manual `clear_flow_alert_review` if an operator runs the service
+  before the next automatic reconciliation
 
 The current product only clears the Supervisor-side review item. Rachio's
 documented public API exposes webhook notification management, but no endpoint
-to dismiss native in-app flow alerts. When flow has been debugged and the
-post-alert calibration is normal, the Supervisor exposes that the review item is
-eligible to clear and records the native app clear as a manual/out-of-band step
-until Rachio publishes an alert-dismiss API.
+to start native flow calibration, read calibrated-flow fields directly, or
+dismiss native in-app flow alerts. When flow has been debugged and the
+post-alert calibration is normal, the Supervisor auto-clears its own review item
+and posts an operator notice with the baseline comparison. Native Rachio app
+calibration and native alert dismissal remain manual/out-of-band steps until
+Rachio publishes supported public API endpoints for those actions.
 
 Zone and baseline matching are still inferred from Rachio event text. The
 runtime should therefore stay conservative: if the evidence chain is ambiguous,

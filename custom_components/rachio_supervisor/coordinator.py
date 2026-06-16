@@ -3262,6 +3262,7 @@ class RachioSupervisorCoordinator(DataUpdateCoordinator[SupervisorSnapshot]):
         self._supervisor_reason = "Awaiting first reconcile."
         self._last_health_notification: str | None = None
         self._last_notified_decision_key: str | None = None
+        self._notified_auto_cleared_flow_alert_ids: set[str] = set()
         self._lockouts: dict[str, dict[str, object]] = {}
         self._auto_moisture_write_lockouts: dict[str, dict[str, object]] = {}
         self._moisture_write_status_by_rule: dict[str, str] = {}
@@ -3339,6 +3340,22 @@ class RachioSupervisorCoordinator(DataUpdateCoordinator[SupervisorSnapshot]):
             raise ValueError(
                 "No flow alert review items are currently eligible for clear. A normal post-alert calibration comparison is required first."
             )
+
+    def _auto_clear_stable_flow_alert_reviews(
+        self,
+        flow_alert_snapshots: tuple[FlowAlertSnapshot, ...],
+    ) -> tuple[FlowAlertSnapshot, ...]:
+        """Clear stable post-calibration flow reviews and return newly cleared items."""
+        cleared: list[FlowAlertSnapshot] = []
+        for alert in flow_alert_snapshots:
+            if (
+                alert.status == "normal_after_calibration"
+                and alert.review_state == "pending_review"
+            ):
+                self._acknowledged_flow_alert_ids.add(alert.rule_id)
+                alert.review_state = "cleared"
+                cleared.append(alert)
+        return tuple(cleared)
 
     def _should_reconcile(self, current: datetime) -> bool:
         """Return whether a full Rachio reconcile should run right now."""
@@ -3788,6 +3805,9 @@ class RachioSupervisorCoordinator(DataUpdateCoordinator[SupervisorSnapshot]):
             webhook_url = evidence.webhook_url
             webhook_external_id = evidence.webhook_external_id
             flow_alert_snapshots = evidence.flow_alert_snapshots
+            auto_cleared_flow_alerts = self._auto_clear_stable_flow_alert_reviews(
+                flow_alert_snapshots
+            )
             weather_outlook = evidence.weather_outlook
             if webhook_health == "unknown":
                 webhook_health = (
@@ -3893,6 +3913,11 @@ class RachioSupervisorCoordinator(DataUpdateCoordinator[SupervisorSnapshot]):
                 for alert in flow_alert_snapshots
                 if alert.review_state == "pending_review"
             ]
+            newly_notified_auto_clears = [
+                alert
+                for alert in auto_cleared_flow_alerts
+                if alert.rule_id not in self._notified_auto_cleared_flow_alert_ids
+            ]
             if notifications_enabled and active_flow_alerts:
                 alert = active_flow_alerts[0]
                 await self._async_update_notification(
@@ -3904,6 +3929,34 @@ class RachioSupervisorCoordinator(DataUpdateCoordinator[SupervisorSnapshot]):
                         f"Action: {alert.recommended_action}\n"
                         f"Evidence: {alert.reason}"
                     ),
+                )
+            elif notifications_enabled and newly_notified_auto_clears:
+                alert = newly_notified_auto_clears[0]
+                baseline_lines = ""
+                if alert.baseline_delta_percent is not None:
+                    baseline_lines = (
+                        f"\nBaseline before: {alert.baseline_before_lpm} L/min"
+                        f"\nBaseline after: {alert.baseline_after_lpm} L/min"
+                        f"\nDelta: {alert.baseline_delta_percent:.1f}%"
+                    )
+                await self._async_update_notification(
+                    notification_id=f"{DOMAIN}_{self.entry.entry_id}_flow_alert",
+                    title="Rachio Supervisor flow alert",
+                    message="Flow alert review cleared.",
+                    dismiss_when=True,
+                )
+                await self._async_update_notification(
+                    notification_id=f"{DOMAIN}_{self.entry.entry_id}_flow_alert_auto_clear",
+                    title="Rachio Supervisor flow alert auto-cleared",
+                    message=(
+                        f"{alert.zone_name}: {alert.alert_kind.replace('_', ' ')} was auto-cleared "
+                        "after investigation.\n\n"
+                        "Evidence: a later native Rachio calibration baseline was found "
+                        f"within Supervisor tolerance.{baseline_lines}"
+                    ),
+                )
+                self._notified_auto_cleared_flow_alert_ids.update(
+                    alert.rule_id for alert in newly_notified_auto_clears
                 )
             elif notifications_enabled:
                 await self._async_update_notification(
