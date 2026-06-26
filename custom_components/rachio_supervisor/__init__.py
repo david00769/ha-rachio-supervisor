@@ -653,7 +653,9 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     """Unload a config entry."""
     unload_ok = await hass.config_entries.async_unload_platforms(entry, PLATFORMS)
     if unload_ok:
-        hass.data.get(DOMAIN, {}).pop(entry.entry_id, None)
+        coordinator = hass.data.get(DOMAIN, {}).pop(entry.entry_id, None)
+        if coordinator:
+            coordinator.clear_webhook_repair_issue()
         if not hass.data.get(DOMAIN):
             remove = hass.data.pop(f"{DOMAIN}_remove_services", None)
             if remove:

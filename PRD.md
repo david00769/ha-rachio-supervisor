@@ -97,6 +97,7 @@ Traits:
 - a generic irrigation automation toolkit
 - a calculation-only engine
 - a custom dashboard framework
+- the owner of Home Assistant core `rachio` webhook/cloudhook mutation
 
 ## Functional Scope
 
@@ -128,6 +129,8 @@ Explicitly not in v1:
 - treating forecast-only weather conditions as observed rainfall
 - treating Rachio forecast payloads as actual rainfall unless the API returns a
   clearly observed historical rainfall total
+- deleting, recreating, or overwriting the webhook registration owned by Home
+  Assistant core's built-in `rachio` integration
 
 ### Safety model
 
@@ -352,6 +355,13 @@ Planned diagnostics surface:
 - policy mode per zone
 - latest supervisor evidence snapshot
 - stale webhook/API warnings
+- Home Assistant Repair issue when fresh evidence shows the linked
+  HA-managed Rachio webhook is missing or mismatched, with a guided
+  reconfigure-and-verify flow that closes only after a fresh Rachio
+  reconciliation matches the webhook
+- the permanent automatic mutation path for missing/stale Rachio webhooks is a
+  Home Assistant core `rachio` integration responsibility; Rachio Supervisor
+  documents the recovery, detects the mismatch, and verifies the result
 
 ### Flow alert supervision
 
@@ -536,6 +546,12 @@ Initial success should be judged by:
 - a zone is promoted from observe-only to auto mode and only that zone may act
   automatically
 - webhook/API data goes stale and degraded health is visible immediately
+- missing or mismatched HA-managed Rachio webhooks create a Home Assistant
+  Repair issue; submitting the repair forces fresh Rachio evidence and keeps
+  the issue open if the webhook still does not match
+- Supervisor does not mutate Home Assistant core `rachio` webhook/cloudhook
+  registration directly; a future upstream core fix can add that self-heal
+  without changing Supervisor's verification contract
 - moisture write-back is enabled and writes to Rachio without broader autonomous
   control
 - moisture auto-write is off by default, runs only for explicitly enabled

@@ -54,6 +54,9 @@ still keeping the default install observe-first:
 - site-level sensors now expose webhook registration health using the linked HA
   Rachio webhook id/url plus the Home Assistant-managed
   `homeassistant.rachio:` webhook prefix
+- when fresh Rachio evidence reports a missing or mismatched HA-managed Rachio
+  webhook, the integration raises a Home Assistant Repair issue with a guided
+  verification flow instead of leaving the dashboard warning as a dead end
 - config flow and options now include a schedule-policy step so individual
   discovered Rachio schedules can be opted into automatic catch-up while the
   default posture stays observe-only
@@ -186,6 +189,44 @@ catch-up sensors must be fresh, selected schedules must be explicitly opted into
 automatic catch-up, and `observe_first` must be disabled only after that review.
 The old cron runner can then be paused; deleting old scripts or state files is a
 separate cleanup step.
+
+## Webhook repair
+
+`Webhook health` is based on a fresh Rachio public API reconciliation against
+the linked Home Assistant `rachio` entry's webhook id/cloudhook details. If that
+evidence reports `missing` or `mismatch`, Rachio Supervisor now creates a Home
+Assistant Repair issue for the affected Supervisor entry.
+
+The repair flow is intentionally a guided verification path, not a hidden
+Rachio rewrite. The Home Assistant Rachio integration owns the actual webhook
+registration, so the operator should:
+
+1. Open the linked Home Assistant Rachio integration.
+2. Reload or reconfigure it so Home Assistant recreates its Rachio
+   cloudhook/webhook registration.
+3. If Supervisor is linked to the wrong Rachio entry, open Rachio Supervisor
+   options and select the correct linked entry.
+4. Return to the Repair issue and submit it. The repair forces fresh Rachio
+   evidence and only closes after the webhook registration matches.
+
+Some integrations can flap briefly after a Home Assistant reboot, but a Rachio
+webhook warning that survives `rachio_supervisor.evaluate_now` is treated as a
+real recovery item, not reboot-only noise.
+
+### Permanent fix boundary
+
+Rachio Supervisor is the detection and verification layer for this condition.
+It should not directly delete, recreate, or overwrite the webhook registration
+owned by Home Assistant's built-in `rachio` integration.
+
+If the root cause is that the built-in Rachio integration did not recreate a
+missing or stale cloudhook/webhook during reload or reconfigure, the permanent
+upstream fix belongs in Home Assistant core's `rachio` integration. A core
+`rachio` fix should own the mutation path: regenerate the HA webhook/cloudhook
+when needed, delete stale `homeassistant.rachio:` registrations from Rachio, and
+persist the corrected webhook id/url on the Rachio config entry. Rachio
+Supervisor should continue to verify the result from fresh Rachio evidence and
+keep its Repair issue open until that evidence matches.
 
 ## Flow alert review contract
 

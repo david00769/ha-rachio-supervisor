@@ -25,6 +25,8 @@ Why:
 
 - controller connection layer
 - existing HA-side Rachio entities/actions
+- owner of HA webhook id/cloudhook storage and Rachio webhook registration
+- permanent self-heal location for missing or stale HA-managed Rachio webhooks
 
 ### Rachio Supervisor
 
@@ -36,6 +38,14 @@ Why:
 - opt-in automatic actions
 - operator diagnostics
 - visual zone-overview payload for the Home Assistant dashboard
+- webhook mismatch detection, Repair issue guidance, and fresh-evidence
+  verification after the core `rachio` integration has been reloaded or
+  reconfigured
+
+Rachio Supervisor intentionally does not delete or recreate the built-in
+`rachio` integration's webhook/cloudhook registration. That mutation belongs to
+Home Assistant core `rachio`; Supervisor only verifies the current Rachio API
+evidence and keeps the operator-facing repair open until the evidence matches.
 
 ## Evidence split
 

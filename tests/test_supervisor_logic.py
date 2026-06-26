@@ -34,6 +34,9 @@ def _install_homeassistant_stubs() -> None:
     homeassistant = types.ModuleType("homeassistant")
     sys.modules["homeassistant"] = homeassistant
 
+    components_pkg = types.ModuleType("homeassistant.components")
+    sys.modules["homeassistant.components"] = components_pkg
+
     config_entries = types.ModuleType("homeassistant.config_entries")
 
     class _ConfigEntryStateValue:
@@ -167,6 +170,61 @@ def _install_homeassistant_stubs() -> None:
 
     helpers_pkg = types.ModuleType("homeassistant.helpers")
     sys.modules["homeassistant.helpers"] = helpers_pkg
+
+    issue_registry = types.ModuleType("homeassistant.helpers.issue_registry")
+
+    class IssueSeverity:
+        ERROR = "error"
+        WARNING = "warning"
+
+    def _issue_store(hass):
+        if not hasattr(hass, "issue_registry_created"):
+            hass.issue_registry_created = []
+        if not hasattr(hass, "issue_registry_deleted"):
+            hass.issue_registry_deleted = []
+        return hass
+
+    def async_create_issue(hass, domain: str, issue_id: str, **kwargs) -> None:
+        store = _issue_store(hass)
+        store.issue_registry_created.append((domain, issue_id, kwargs))
+
+    def async_delete_issue(hass, domain: str, issue_id: str) -> None:
+        store = _issue_store(hass)
+        store.issue_registry_deleted.append((domain, issue_id))
+
+    issue_registry.IssueSeverity = IssueSeverity
+    issue_registry.async_create_issue = async_create_issue
+    issue_registry.async_delete_issue = async_delete_issue
+    sys.modules["homeassistant.helpers.issue_registry"] = issue_registry
+    helpers_pkg.issue_registry = issue_registry
+
+    repairs_component = types.ModuleType("homeassistant.components.repairs")
+
+    class RepairsFlow:
+        def async_show_form(
+            self,
+            *,
+            step_id: str,
+            description_placeholders=None,
+            errors=None,
+        ):
+            return {
+                "type": "form",
+                "step_id": step_id,
+                "description_placeholders": description_placeholders or {},
+                "errors": errors or {},
+            }
+
+        def async_create_entry(self, *, title: str, data: dict):
+            return {"type": "create_entry", "title": title, "data": data}
+
+    class ConfirmRepairFlow(RepairsFlow):
+        pass
+
+    repairs_component.RepairsFlow = RepairsFlow
+    repairs_component.ConfirmRepairFlow = ConfirmRepairFlow
+    repairs_component.RepairsFlowResult = dict
+    sys.modules["homeassistant.components.repairs"] = repairs_component
 
     selector = types.ModuleType("homeassistant.helpers.selector")
 
@@ -391,6 +449,7 @@ config_flow = importlib.import_module("custom_components.rachio_supervisor.confi
 coordinator_module = importlib.import_module("custom_components.rachio_supervisor.coordinator")
 diagnostics = importlib.import_module("custom_components.rachio_supervisor.diagnostics")
 photo_import = importlib.import_module("custom_components.rachio_supervisor.photo_import")
+repairs = importlib.import_module("custom_components.rachio_supervisor.repairs")
 sensor_module = importlib.import_module("custom_components.rachio_supervisor.sensor")
 from custom_components.rachio_supervisor.const import DOMAIN
 from custom_components.rachio_supervisor.coordinator import (
@@ -1015,6 +1074,137 @@ class ServiceRegistrationTests(unittest.TestCase):
         self.assertEqual(forced, ["called"])
         remove()
         self.assertIn((DOMAIN, "evaluate_now"), services.removed)
+
+
+class WebhookRepairIssueTests(unittest.TestCase):
+    def _coordinator(self, hass) -> RachioSupervisorCoordinator:
+        coordinator = object.__new__(RachioSupervisorCoordinator)
+        coordinator.hass = hass
+        coordinator.entry = SimpleNamespace(entry_id="entry-1", title="Demo Site")
+        return coordinator
+
+    def test_coordinator_creates_fixable_issue_for_mismatched_webhook(self) -> None:
+        hass = SimpleNamespace()
+        coordinator = self._coordinator(hass)
+        evidence = SimpleNamespace(
+            webhook_health="mismatch",
+            webhook_count=2,
+            webhook_url="https://old.example.invalid/api/webhook",
+            webhook_external_id="legacy",
+        )
+        linked_entry = SimpleNamespace(entry_id="rachio-1", title="Built-in Rachio")
+
+        coordinator._update_webhook_repair_issue(
+            evidence=evidence,
+            linked_entry=linked_entry,
+            expected_webhook_id="expected-id",
+            expected_cloudhook_url="https://hooks.nabu.casa/abc",
+        )
+
+        issue = hass.issue_registry_created[-1]
+        self.assertEqual(issue[0], DOMAIN)
+        self.assertEqual(
+            issue[1],
+            coordinator_module.webhook_repair_issue_id("entry-1"),
+        )
+        self.assertTrue(issue[2]["is_fixable"])
+        self.assertEqual(issue[2]["severity"], "error")
+        self.assertEqual(issue[2]["translation_key"], "webhook_registration")
+        self.assertEqual(issue[2]["data"]["entry_id"], "entry-1")
+        self.assertEqual(issue[2]["data"]["webhook_health"], "mismatch")
+        self.assertEqual(
+            issue[2]["translation_placeholders"]["linked_entry_title"],
+            "Built-in Rachio",
+        )
+
+    def test_coordinator_clears_issue_for_registered_webhook(self) -> None:
+        hass = SimpleNamespace()
+        coordinator = self._coordinator(hass)
+        evidence = SimpleNamespace(
+            webhook_health="registered",
+            webhook_count=1,
+            webhook_url="https://hooks.nabu.casa/abc",
+            webhook_external_id="homeassistant.rachio:expected-id",
+        )
+
+        coordinator._update_webhook_repair_issue(
+            evidence=evidence,
+            linked_entry=None,
+            expected_webhook_id="expected-id",
+            expected_cloudhook_url="https://hooks.nabu.casa/abc",
+        )
+
+        self.assertEqual(
+            hass.issue_registry_deleted,
+            [(DOMAIN, coordinator_module.webhook_repair_issue_id("entry-1"))],
+        )
+
+    def test_repair_flow_forces_fresh_evidence_before_closing(self) -> None:
+        hass = SimpleNamespace()
+        coordinator = self._coordinator(hass)
+        coordinator.data = SimpleNamespace(
+            site_name="Demo Site",
+            linked_entry_title="Built-in Rachio",
+            webhook_health="registration_missing",
+            webhook_count=0,
+            webhook_url=None,
+            webhook_external_id=None,
+        )
+        coordinator._cached_evidence = SimpleNamespace(webhook_health="missing")
+        calls: list[str] = []
+
+        def _force() -> None:
+            calls.append("force")
+
+        async def _refresh() -> None:
+            calls.append("refresh")
+            coordinator._cached_evidence = SimpleNamespace(webhook_health="registered")
+
+        coordinator.force_next_reconciliation = _force
+        coordinator.async_request_refresh = _refresh
+        hass.data = {DOMAIN: {"entry-1": coordinator}}
+        flow = repairs.WebhookRegistrationRepairFlow("entry-1")
+        flow.hass = hass
+
+        result = asyncio.run(flow.async_step_confirm({}))
+
+        self.assertEqual(result["type"], "create_entry")
+        self.assertEqual(calls, ["force", "refresh"])
+        self.assertEqual(
+            hass.issue_registry_deleted,
+            [(DOMAIN, coordinator_module.webhook_repair_issue_id("entry-1"))],
+        )
+
+    def test_repair_flow_keeps_issue_when_fresh_evidence_still_missing(self) -> None:
+        coordinator = self._coordinator(SimpleNamespace())
+        coordinator.data = SimpleNamespace(
+            site_name="Demo Site",
+            linked_entry_title="Built-in Rachio",
+            webhook_health="registration_missing",
+            webhook_count=0,
+            webhook_url=None,
+            webhook_external_id=None,
+        )
+        coordinator._cached_evidence = SimpleNamespace(webhook_health="missing")
+        calls: list[str] = []
+
+        def _force() -> None:
+            calls.append("force")
+
+        async def _refresh() -> None:
+            calls.append("refresh")
+
+        coordinator.force_next_reconciliation = _force
+        coordinator.async_request_refresh = _refresh
+        hass = SimpleNamespace(data={DOMAIN: {"entry-1": coordinator}})
+        flow = repairs.WebhookRegistrationRepairFlow("entry-1")
+        flow.hass = hass
+
+        result = asyncio.run(flow.async_step_confirm({}))
+
+        self.assertEqual(result["type"], "form")
+        self.assertEqual(result["errors"], {"base": "webhook_still_unhealthy"})
+        self.assertEqual(calls, ["force", "refresh"])
 
 
 class BulkMoistureServiceTests(unittest.TestCase):

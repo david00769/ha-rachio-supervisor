@@ -18,6 +18,12 @@
   explaining that the review was auto-cleared after investigation. Native
   calibration still must be run in Rachio because the documented public API does
   not expose a calibration command.
+- Added a Home Assistant Repair issue and guided verification flow for fresh
+  Rachio evidence that reports the linked HA-managed webhook as missing or
+  mismatched. The repair forces a fresh reconciliation and only closes after
+  the webhook registration matches. Documentation now states that permanent
+  webhook/cloudhook mutation belongs to Home Assistant core's built-in
+  `rachio` integration, while Rachio Supervisor owns detection and verification.
 
 ## 0.2.11 - 2026-05-14
 

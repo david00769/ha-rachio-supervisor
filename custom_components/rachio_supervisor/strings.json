@@ -90,6 +90,24 @@
     "required": "Required for the selected rain source.",
     "invalid_station_id": "Enter the Weather Underground station ID, for example KCAEXAMP1."
   },
+  "issues": {
+    "webhook_registration": {
+      "fix_flow": {
+        "error": {
+          "entry_not_loaded": "The Rachio Supervisor entry is not loaded. Reload the integration, then try this repair again.",
+          "webhook_still_unhealthy": "Fresh Rachio evidence still does not show a matching Home Assistant-managed webhook. Repair or reconfigure the linked Rachio integration, then submit again."
+        },
+        "step": {
+          "confirm": {
+            "title": "Repair Rachio webhook registration for {site_name}",
+            "description": "Rachio Supervisor does not see a valid Home Assistant-managed Rachio webhook for `{site_name}`.\n\nCurrent evidence: linked entry `{linked_entry_title}`, webhook health `{webhook_health}`, Rachio webhook count `{webhook_count}`, matched URL `{webhook_url}`, matched external id `{webhook_external_id}`.\n\nThis is not treated as reboot noise after a fresh evaluation. Open the linked Home Assistant Rachio integration and reload or reconfigure it so Home Assistant recreates its Rachio cloudhook/webhook. If Rachio Supervisor is linked to the wrong Rachio entry, open Rachio Supervisor options and select the correct linked entry. Then select Submit here to force fresh Rachio evidence and clear this repair only if the webhook matches."
+          }
+        }
+      },
+      "title": "Rachio webhook registration is {webhook_health} for {site_name}",
+      "description": "Rachio Supervisor refreshed live Rachio evidence for `{site_name}` and did not find a matching Home Assistant-managed Rachio webhook. Linked entry: `{linked_entry_title}`. Rachio webhook count: `{webhook_count}`. Expected webhook id: `{expected_webhook_id}`. Expected cloudhook host: `{expected_cloudhook_host}`. Observed matched URL: `{observed_webhook_url}`. Observed matched external id: `{observed_webhook_external_id}`."
+    }
+  },
   "entity": {
     "sensor": {
       "health": {

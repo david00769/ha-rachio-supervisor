@@ -107,6 +107,7 @@ WEATHER_PROBE_HINT_WORDS = (
     "temp",
     "humidity",
 )
+WEBHOOK_REPAIR_ISSUE_PREFIX = "webhook_registration_"
 RAIN_SOURCE_DOMAINS = {"sensor", "weather"}
 INVALID_RAIN_CANDIDATE_STATUSES = {"missing", "non_numeric"}
 SUPERVISOR_RAIN_DIAGNOSTIC_SUFFIXES = (
@@ -372,6 +373,11 @@ class SupervisorSnapshot:
     rain_source_mode: str = DEFAULT_RAIN_SOURCE_MODE
     rain_source_label: str = "unconfigured"
     rain_source_observed_at: str | None = None
+
+
+def webhook_repair_issue_id(entry_id: str) -> str:
+    """Return the stable Home Assistant repair issue id for one entry."""
+    return f"{WEBHOOK_REPAIR_ISSUE_PREFIX}{entry_id}"
 
 
 def event_dt(event: dict[str, object]) -> datetime:
@@ -3279,6 +3285,78 @@ class RachioSupervisorCoordinator(DataUpdateCoordinator[SupervisorSnapshot]):
             "decision_at": None,
         }
 
+    def clear_webhook_repair_issue(self) -> None:
+        """Clear the webhook repair issue for this supervisor entry."""
+        try:
+            from homeassistant.helpers import issue_registry as ir
+        except (ImportError, AttributeError):
+            return
+        ir.async_delete_issue(
+            self.hass,
+            DOMAIN,
+            webhook_repair_issue_id(self.entry.entry_id),
+        )
+
+    def _update_webhook_repair_issue(
+        self,
+        *,
+        evidence: RachioEvidenceSnapshot | None,
+        linked_entry: ConfigEntry | None,
+        expected_webhook_id: object | None,
+        expected_cloudhook_url: object | None,
+    ) -> None:
+        """Create or clear the operator repair issue for webhook registration."""
+        if evidence is None:
+            return
+        if evidence.webhook_health == "registered":
+            self.clear_webhook_repair_issue()
+            return
+        if evidence.webhook_health not in {"missing", "mismatch"}:
+            return
+        try:
+            from homeassistant.helpers import issue_registry as ir
+        except (ImportError, AttributeError):
+            return
+
+        expected_host = (
+            urllib.parse.urlparse(str(expected_cloudhook_url)).netloc
+            if expected_cloudhook_url
+            else "unknown"
+        )
+        observed_url = evidence.webhook_url or "none"
+        observed_external_id = evidence.webhook_external_id or "none"
+        issue_key = webhook_repair_issue_id(self.entry.entry_id)
+        ir.async_create_issue(
+            self.hass,
+            DOMAIN,
+            issue_key,
+            data={
+                "entry_id": self.entry.entry_id,
+                "linked_entry_id": linked_entry.entry_id if linked_entry else None,
+                "site_name": str(self.entry.title),
+                "webhook_health": evidence.webhook_health,
+                "webhook_count": evidence.webhook_count,
+            },
+            is_fixable=True,
+            is_persistent=False,
+            learn_more_url=(
+                "https://github.com/david00769/ha-rachio-supervisor"
+                "#webhook-repair"
+            ),
+            severity=ir.IssueSeverity.ERROR,
+            translation_key="webhook_registration",
+            translation_placeholders={
+                "site_name": str(self.entry.title),
+                "linked_entry_title": linked_entry.title if linked_entry else "missing",
+                "webhook_health": evidence.webhook_health,
+                "webhook_count": str(evidence.webhook_count),
+                "expected_webhook_id": str(expected_webhook_id or "unknown"),
+                "expected_cloudhook_host": expected_host,
+                "observed_webhook_url": observed_url,
+                "observed_webhook_external_id": observed_external_id,
+            },
+        )
+
     def record_moisture_write(
         self,
         *,
@@ -3815,6 +3893,12 @@ class RachioSupervisorCoordinator(DataUpdateCoordinator[SupervisorSnapshot]):
                     if evidence.webhook_health == "registered"
                     else "registration_missing"
                 )
+            self._update_webhook_repair_issue(
+                evidence=evidence,
+                linked_entry=linked_entry,
+                expected_webhook_id=expected_webhook_id,
+                expected_cloudhook_url=expected_cloudhook_url,
+            )
             schedule_snapshots = apply_moisture_mapping(
                 self.hass,
                 evidence.schedule_snapshots,

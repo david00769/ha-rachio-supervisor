@@ -644,6 +644,10 @@ gate before pausing the cron runner:
 
 1. Reload the custom integration and confirm `Health`, `Webhook health`, `Last
    reconciliation`, `Catch-up evidence`, and `Last catch-up decision` are fresh.
+   If `Webhook health` remains degraded after fresh evaluation, resolve the
+   Rachio Supervisor Repair issue before treating the dashboard as ready. The
+   repair verifies fresh Rachio evidence; the linked Home Assistant `rachio`
+   integration owns any actual webhook/cloudhook recreation.
 2. Confirm the zone grid card loads from
    `/rachio_supervisor/rachio-supervisor-zone-grid-card.js?v=<installed-version>`
    and that Lovelace is not using an inline `data:text/javascript` copy.

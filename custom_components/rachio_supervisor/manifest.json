@@ -3,7 +3,7 @@
   "name": "Rachio Supervisor",
   "codeowners": ["@david00769"],
   "config_flow": true,
-  "dependencies": ["rachio"],
+  "dependencies": ["rachio", "repairs"],
   "documentation": "https://github.com/david00769/ha-rachio-supervisor#readme",
   "integration_type": "service",
   "iot_class": "cloud_polling",
