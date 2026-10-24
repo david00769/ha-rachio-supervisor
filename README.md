@@ -555,3 +555,11 @@ observed-rain sourcing.
 - Photo import is opt-in and read-only.
 - Manual local photo overrides always win over imported Rachio photos.
 - Unresolved Rachio zones fall back to the packaged placeholder.
+
+## License
+
+MIT up to commit `3beaa50`; david00769's later work is under the
+[PolyForm Noncommercial License 1.0.0](LICENSES/PolyForm-Noncommercial-1.0.0.md),
+free for personal, hobby, research, educational, charitable and government use.
+Commercial use needs a license from [david00769](https://github.com/david00769).
+See [LICENSE](LICENSE).
