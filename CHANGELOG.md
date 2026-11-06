@@ -7,8 +7,9 @@
   Home Assistant's unit system) says which scale the account reports, because
   Rachio's forecast does not label its units and can ignore the requested ones.
   `temperatureMin`/`temperatureMax` are also recognized. Thanks to lunaroja (#1).
-- Fixed forecast days being labelled "today" and "next" from an unordered list:
-  they are now sorted by date, skipping past days.
+- Fixed `Heat assist` showing the wrong day: Rachio returns its days unordered
+  and moves an arbitrary day to `current`, so "now", "today" and "next" are now
+  chosen by date.
 - Added human-readable site-level data-warning attributes for dashboard
   overlays: `data_warning_summary`, `data_warning_count`, and structured
   `data_warnings` entries. Moisture sensor warnings are grouped by operator

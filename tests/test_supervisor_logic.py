@@ -10,6 +10,7 @@ import asyncio
 import json
 from dataclasses import dataclass, replace
 from datetime import datetime, timezone
+from zoneinfo import ZoneInfo
 import importlib
 from pathlib import Path
 import sys
@@ -4388,6 +4389,96 @@ class WeatherUnitTests(unittest.TestCase):
         schema = config_flow._flow_schema([("entry-1", "Rachio")])
         markers = {key.value: key for key in schema.value}
         self.assertEqual(markers["rachio_forecast_units"].default, "auto")
+
+    def test_current_for_another_day_is_not_reported_as_now(self):
+        day = 86400
+        midnight = 1_800_000_000
+        now = datetime.fromtimestamp(midnight + 3600, timezone.utc)
+        today = {"time": midnight, "weatherSummary": "Today", "temperatureMax": 13}
+        tomorrow = {"time": midnight + day, "weatherSummary": "Tomorrow"}
+        later = {"time": midnight + 5 * day, "weatherSummary": "Later", "currentTemperature": 15}
+        outlook = build_rachio_weather_outlook(
+            {"current": later, "forecast": [tomorrow, today]}, now=now,
+        )
+        self.assertEqual(outlook["current"]["weather_summary"], "Today")
+        self.assertIsNone(outlook["current"]["temperature_c"])
+        self.assertEqual(outlook["forecast"][0]["weather_summary"], "Today")
+        self.assertEqual(outlook["next"]["weather_summary"], "Tomorrow")
+
+    def test_todays_current_supplies_today_when_missing_from_forecast(self):
+        day = 86400
+        midnight = 1_800_000_000
+        now = datetime.fromtimestamp(midnight + 3600, timezone.utc)
+        today = {"time": midnight, "weatherSummary": "Today", "currentTemperature": 10}
+        outlook = build_rachio_weather_outlook(
+            {
+                "current": today,
+                "forecast": [
+                    {"time": midnight + 2 * day, "weatherSummary": "Later"},
+                    {"time": midnight + day, "weatherSummary": "Tomorrow"},
+                ],
+            },
+            now=now,
+        )
+        self.assertEqual(outlook["current"]["temperature_c"], 10)
+        self.assertEqual(
+            [(item["label"], item["weather_summary"]) for item in outlook["forecast"]],
+            [("today", "Today"), ("next", "Tomorrow")],
+        )
+        self.assertEqual(outlook["next"]["weather_summary"], "Tomorrow")
+
+    def _day_outlook(self, current, forecast):
+        self.midnight = 1_800_000_000
+        now = datetime.fromtimestamp(self.midnight + 3600, timezone.utc)
+        return build_rachio_weather_outlook({"current": current, "forecast": forecast}, now=now)
+
+    def _day(self, offset, summary):
+        return {"time": 1_800_000_000 + offset * 86400, "weatherSummary": summary}
+
+    def test_today_in_both_current_and_forecast_is_not_next(self):
+        outlook = self._day_outlook(
+            self._day(0, "Today"), [self._day(0, "Today"), self._day(1, "Tomorrow")],
+        )
+        self.assertEqual(outlook["summary"], "Now: Today; Next: Tomorrow")
+
+    def test_lone_today_has_no_next(self):
+        outlook = self._day_outlook(self._day(0, "Today"), [])
+        self.assertEqual(outlook["summary"], "Now: Today")
+        self.assertIsNone(outlook["next"])
+
+    def _dst_outlook(self, now, *dates):
+        zone = ZoneInfo("Australia/Sydney")
+        days = [
+            {"time": int(datetime(*date, tzinfo=zone).timestamp()), "weatherSummary": f"{date[1]}-{date[2]}"}
+            for date in dates
+        ]
+        return build_rachio_weather_outlook(
+            {"forecast": days}, now=datetime(*now, tzinfo=zone),
+        )
+
+    def test_today_survives_the_25_hour_dst_day(self):
+        outlook = self._dst_outlook((2027, 4, 4, 23, 30), (2027, 4, 4), (2027, 4, 5))
+        self.assertEqual(outlook["forecast"][0]["weather_summary"], "4-4")
+        self.assertEqual(outlook["next"]["weather_summary"], "4-5")
+
+    def test_yesterday_is_not_today_after_the_23_hour_dst_day(self):
+        outlook = self._dst_outlook(
+            (2026, 10, 5, 0, 30), (2026, 10, 4), (2026, 10, 5), (2026, 10, 6),
+        )
+        self.assertEqual(outlook["forecast"][0]["weather_summary"], "10-5")
+        self.assertEqual(outlook["next"]["weather_summary"], "10-6")
+
+    def test_stale_days_are_not_reported_as_today(self):
+        outlook = self._day_outlook(self._day(-3, "Old"), [self._day(-2, "Older")])
+        self.assertIsNone(outlook["current"])
+        self.assertEqual(outlook["forecast"], [])
+
+    def test_only_future_days_have_no_now_or_today(self):
+        outlook = self._day_outlook(
+            self._day(3, "Later"), [self._day(1, "Tomorrow"), self._day(2, "After")],
+        )
+        self.assertEqual(outlook["summary"], "Next: Tomorrow")
+        self.assertEqual([item["label"] for item in outlook["forecast"]], ["next"])
 
     def test_forecast_days_are_ordered_and_past_days_skipped(self):
         day = 86400

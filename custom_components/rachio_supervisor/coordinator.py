@@ -2686,17 +2686,49 @@ def resolve_forecast_units(setting: object, ha_temperature_unit: object) -> str:
     return "US" if ha_temperature_unit == "\u00b0F" else "METRIC"
 
 
-def _upcoming_forecast_days(raw_forecast: list[object], now: datetime | None) -> list[object]:
-    """Return forecast days in date order from today, as Rachio does not sort them."""
-    times = [item.get("time") if isinstance(item, dict) else None for item in raw_forecast]
-    if not all(isinstance(value, (int, float)) for value in times):
-        return raw_forecast
-    earliest = (now or dt_util.now()).timestamp() - 86400
-    return [
-        item
-        for time_value, item in sorted(zip(times, raw_forecast), key=lambda pair: pair[0])
-        if time_value > earliest
-    ]
+def _select_forecast_days(
+    forecast_payload: dict[str, object], now: datetime | None
+) -> tuple[object, list[tuple[str, object]], bool]:
+    """Return the node for now, the labelled days ahead, and whether they are dated.
+
+    Rachio returns a pool of days in no order and moves an arbitrary one of them
+    to ``current``, so ``current`` is not always today and today may be missing
+    from ``forecast``. Payloads without numeric ``time`` keep their given order.
+    """
+    current = forecast_payload.get("current")
+    raw_forecast = forecast_payload.get("forecast")
+    forecast = raw_forecast if isinstance(raw_forecast, list) else []
+
+    def day_time(node: object) -> object:
+        return node.get("time") if isinstance(node, dict) else None
+
+    def is_dated(node: object) -> bool:
+        return isinstance(day_time(node), (int, float))
+
+    if not all(is_dated(node) for node in forecast):
+        labelled = [
+            ("today" if index == 0 else "next", item)
+            for index, item in enumerate(forecast[:2])
+        ]
+        return current, labelled, False
+
+    timestamp = (now or dt_util.now()).timestamp()
+    pool = [*forecast, current] if is_dated(current) else forecast
+    days = sorted(pool, key=day_time)
+    # A day starts at device-local midnight and lasts up to 25 hours across DST.
+    today = next(
+        (day for day in reversed(days) if timestamp - 90000 < day_time(day) <= timestamp),
+        None,
+    )
+    following = next((day for day in days if day_time(day) > timestamp), None)
+    labelled = []
+    if today is not None:
+        labelled.append(("today", today))
+    if following is not None:
+        labelled.append(("next", following))
+    if not is_dated(current) or (today is not None and day_time(current) == day_time(today)):
+        return current, labelled, True
+    return today, labelled, True
 
 
 def build_rachio_weather_outlook(
@@ -2720,17 +2752,16 @@ def build_rachio_weather_outlook(
             "forecast": [],
         }
 
-    current = _forecast_record(forecast_payload.get("current"), "current", units)
+    current_node, days, days_are_dated = _select_forecast_days(forecast_payload, now)
+    current = _forecast_record(current_node, "current", units)
     forecast_items = []
-    raw_forecast = forecast_payload.get("forecast")
-    if isinstance(raw_forecast, list):
-        for index, item in enumerate(_upcoming_forecast_days(raw_forecast, now)[:2]):
-            record = _forecast_record(item, "today" if index == 0 else "next", units)
-            if record:
-                forecast_items.append(record)
-    next_record = forecast_items[1] if len(forecast_items) > 1 else (
-        forecast_items[0] if forecast_items else None
-    )
+    for label, item in days:
+        record = _forecast_record(item, label, units)
+        if record:
+            forecast_items.append(record)
+    next_record = next((item for item in forecast_items if item["label"] == "next"), None)
+    if next_record is None and forecast_items and not days_are_dated:
+        next_record = forecast_items[0]
 
     summary_parts = []
     if current:
