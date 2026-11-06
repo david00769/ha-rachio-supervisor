@@ -31,6 +31,10 @@ from .const import (
     CONF_IMPORT_RACHIO_ZONE_PHOTOS,
     CONF_MOISTURE_SENSOR_ENTITIES,
     CONF_OBSERVE_FIRST,
+    CONF_RACHIO_FORECAST_UNITS,
+    DEFAULT_RACHIO_FORECAST_UNITS,
+    FORECAST_UNITS_METRIC,
+    FORECAST_UNITS_US,
     CONF_RACHIO_CONFIG_ENTRY_ID,
     CONF_RAIN_ACTUALS_ENTITY,
     CONF_RAIN_SOURCE_MODE,
@@ -2667,10 +2671,39 @@ def _forecast_record(
     }
 
 
+def resolve_forecast_units(setting: object, ha_temperature_unit: object) -> str:
+    """Return the unit system Rachio forecasts are read in for this site.
+
+    Rachio's forecast does not label its units and can ignore the requested
+    ``units`` (a metric account returns Celsius for ``units=US``), so the scale
+    cannot be detected from a response. ``auto`` follows Home Assistant's unit
+    system, and the setting corrects an account that differs from it.
+    """
+    if setting == FORECAST_UNITS_US:
+        return "US"
+    if setting == FORECAST_UNITS_METRIC:
+        return "METRIC"
+    return "US" if ha_temperature_unit == "\u00b0F" else "METRIC"
+
+
+def _upcoming_forecast_days(raw_forecast: list[object], now: datetime | None) -> list[object]:
+    """Return forecast days in date order from today, as Rachio does not sort them."""
+    times = [item.get("time") if isinstance(item, dict) else None for item in raw_forecast]
+    if not all(isinstance(value, (int, float)) for value in times):
+        return raw_forecast
+    earliest = (now or dt_util.now()).timestamp() - 86400
+    return [
+        item
+        for time_value, item in sorted(zip(times, raw_forecast), key=lambda pair: pair[0])
+        if time_value > earliest
+    ]
+
+
 def build_rachio_weather_outlook(
     forecast_payload: dict[str, object] | None,
     *,
     units: str = "METRIC",
+    now: datetime | None = None,
 ) -> dict[str, object]:
     """Build a read-only weather outlook without treating forecasts as actual rain."""
     if not forecast_payload:
@@ -2691,7 +2724,7 @@ def build_rachio_weather_outlook(
     forecast_items = []
     raw_forecast = forecast_payload.get("forecast")
     if isinstance(raw_forecast, list):
-        for index, item in enumerate(raw_forecast[:2]):
+        for index, item in enumerate(_upcoming_forecast_days(raw_forecast, now)[:2]):
             record = _forecast_record(item, "today" if index == 0 else "next", units)
             if record:
                 forecast_items.append(record)
@@ -3001,6 +3034,7 @@ def build_rachio_evidence(
     acknowledged_flow_alert_ids: set[str],
     import_zone_photos: bool = False,
     config_path=None,
+    forecast_units: str = "METRIC",
 ) -> RachioEvidenceSnapshot:
     """Build a site-level evidence snapshot from the public Rachio API."""
     devices = client.list_person_devices()
@@ -3021,9 +3055,7 @@ def build_rachio_evidence(
     forecast_payload: dict[str, object] | None = None
     if callable(forecast_getter):
         try:
-            # METRIC responses can contain unlabelled US values. Request US
-            # explicitly, then normalize to our Celsius/mm reporting contract.
-            forecast_payload = forecast_getter(controller_id, units="US")
+            forecast_payload = forecast_getter(controller_id, units=forecast_units)
             weather_source_probe = build_rachio_weather_probe(controller, forecast_payload)
         except RachioClientError as err:
             weather_source_probe = build_rachio_weather_probe(controller, None)
@@ -3036,7 +3068,7 @@ def build_rachio_evidence(
         weather_source_probe["reason"] = (
             "Rachio forecast/source probe unavailable in the current API adapter."
         )
-    weather_outlook = build_rachio_weather_outlook(forecast_payload, units="US")
+    weather_outlook = build_rachio_weather_outlook(forecast_payload, units=forecast_units)
     if weather_source_probe.get("status") == "forecast_unavailable":
         weather_outlook["reason"] = weather_source_probe.get(
             "reason",
@@ -3668,6 +3700,13 @@ class RachioSupervisorCoordinator(DataUpdateCoordinator[SupervisorSnapshot]):
         )
         self._latest_catch_up_decision = executed
 
+    def _forecast_units(self, data: dict[str, object]) -> str:
+        """Return the unit system this site's Rachio forecast is read in."""
+        return resolve_forecast_units(
+            data.get(CONF_RACHIO_FORECAST_UNITS, DEFAULT_RACHIO_FORECAST_UNITS),
+            self.hass.config.units.temperature_unit,
+        )
+
     async def _async_update_data(self) -> SupervisorSnapshot:
         """Return the current site-level supervision snapshot."""
         current = dt_util.now()
@@ -3854,6 +3893,7 @@ class RachioSupervisorCoordinator(DataUpdateCoordinator[SupervisorSnapshot]):
                         )
                     ),
                     self.hass.config.path,
+                    self._forecast_units(data),
                 )
             except RachioClientError as err:
                 notes.append(f"Rachio API evidence fetch failed: {err}")

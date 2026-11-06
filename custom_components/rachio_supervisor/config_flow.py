@@ -23,6 +23,11 @@ from .const import (
     CONF_IMPORT_RACHIO_ZONE_PHOTOS,
     CONF_MOISTURE_SENSOR_ENTITIES,
     CONF_OBSERVE_FIRST,
+    CONF_RACHIO_FORECAST_UNITS,
+    DEFAULT_RACHIO_FORECAST_UNITS,
+    FORECAST_UNITS_AUTO,
+    FORECAST_UNITS_METRIC,
+    FORECAST_UNITS_US,
     CONF_RACHIO_CONFIG_ENTRY_ID,
     CONF_RAIN_ACTUALS_ENTITY,
     CONF_RAIN_SOURCE_MODE,
@@ -72,6 +77,14 @@ MOISTURE_SENSOR_EXCLUDE_HINTS = (
     "temperature",
     "warning",
 )
+FORECAST_UNITS_OPTIONS = [
+    selector.SelectOptionDict(
+        value=FORECAST_UNITS_AUTO,
+        label="Automatic (follow Home Assistant units)",
+    ),
+    selector.SelectOptionDict(value=FORECAST_UNITS_METRIC, label="Metric (Celsius, mm)"),
+    selector.SelectOptionDict(value=FORECAST_UNITS_US, label="US (Fahrenheit, inches)"),
+]
 RAIN_SOURCE_OPTIONS = [
     selector.SelectOptionDict(
         value=RAIN_SOURCE_MODE_ENTITY,
@@ -307,6 +320,15 @@ def _flow_schema(
         ): selector.SelectSelector(
             selector.SelectSelectorConfig(
                 options=RAIN_SOURCE_OPTIONS,
+                mode=selector.SelectSelectorMode.DROPDOWN,
+            )
+        ),
+        vol.Required(
+            CONF_RACHIO_FORECAST_UNITS,
+            default=defaults.get(CONF_RACHIO_FORECAST_UNITS, DEFAULT_RACHIO_FORECAST_UNITS),
+        ): selector.SelectSelector(
+            selector.SelectSelectorConfig(
+                options=FORECAST_UNITS_OPTIONS,
                 mode=selector.SelectSelectorMode.DROPDOWN,
             )
         ),

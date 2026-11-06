@@ -307,6 +307,11 @@ real Home Assistant instance without forcing optional inputs too early.
   read-only `Heat assist` outlook. Forecast precipitation is not treated as
   observed rainfall unless a future API payload exposes a clearly observed
   historical total
+- Rachio's forecast does not label its units and can ignore the requested ones,
+  so the `Rachio account forecast units` setting says which scale your account
+  reports. Automatic follows Home Assistant's unit system; if your Rachio account
+  and Home Assistant differ, or `Heat assist` temperatures look wrong, set it
+  explicitly
 - rain-source discovery filters out Supervisor bookkeeping entities and old
   helper/automation state so the candidate list stays focused on actual
   sensor or weather entities

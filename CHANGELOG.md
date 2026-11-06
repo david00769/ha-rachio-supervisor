@@ -2,9 +2,13 @@
 
 ## Unreleased
 
-- Fixed Heat Assist weather showing Fahrenheit values as Celsius: forecasts are
-  now requested in US units and converted to the existing Celsius and mm fields,
-  and `temperatureMin`/`temperatureMax` are recognized. Thanks to lunaroja (#1).
+- Fixed Heat Assist weather showing Fahrenheit values as Celsius on US accounts:
+  a new "Rachio account forecast units" setting (automatic by default, following
+  Home Assistant's unit system) says which scale the account reports, because
+  Rachio's forecast does not label its units and can ignore the requested ones.
+  `temperatureMin`/`temperatureMax` are also recognized. Thanks to lunaroja (#1).
+- Fixed forecast days being labelled "today" and "next" from an unordered list:
+  they are now sorted by date, skipping past days.
 - Added human-readable site-level data-warning attributes for dashboard
   overlays: `data_warning_summary`, `data_warning_count`, and structured
   `data_warnings` entries. Moisture sensor warnings are grouped by operator

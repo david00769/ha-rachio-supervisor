@@ -463,6 +463,7 @@ from custom_components.rachio_supervisor.coordinator import (
     build_rachio_evidence,
     build_rachio_weather_probe,
     build_rachio_weather_outlook,
+    resolve_forecast_units,
     build_catch_up_action_label,
     build_catch_up_evidence_label,
     build_flow_alert_snapshots,
@@ -4327,12 +4328,12 @@ class WeatherUnitTests(unittest.TestCase):
         self.assertEqual(outlook["current"]["temperature_c"], 15)
         self.assertEqual(outlook["current"]["precip_mm"], 2.5)
 
-    def test_evidence_requests_us_units_and_normalizes_the_response(self):
+    def _evidence_for(self, forecast_payload, **kwargs):
         requested_units = []
 
         def forecast(_controller_id, *, units):
             requested_units.append(units)
-            return {"current": {"currentTemperature": 59}}
+            return forecast_payload
 
         client = SimpleNamespace(
             list_person_devices=lambda: [{
@@ -4349,10 +4350,64 @@ class WeatherUnitTests(unittest.TestCase):
             zone_entities=(), schedule_entities=(), all_entities=(),
         )
         evidence = build_rachio_evidence(
-            client, linked, 1, True, "Test", None, None, set(), set(), set(),
+            client, linked, 1, True, "Test", None, None, set(), set(), set(), **kwargs,
         )
-        self.assertEqual(requested_units, ["US"])
+        return evidence, requested_units
+
+    def test_us_account_evidence_converts_fahrenheit(self):
+        evidence, requested = self._evidence_for(
+            {"current": {"currentTemperature": 59}}, forecast_units="US",
+        )
+        self.assertEqual(requested, ["US"])
         self.assertEqual(evidence.weather_outlook["current"]["temperature_c"], 15)
+
+    def test_metric_account_evidence_leaves_celsius_alone(self):
+        evidence, requested = self._evidence_for(
+            {"current": {"currentTemperature": 14.5, "calculatedPrecip": 0.23}},
+            forecast_units="METRIC",
+        )
+        self.assertEqual(requested, ["METRIC"])
+        self.assertEqual(evidence.weather_outlook["current"]["temperature_c"], 14.5)
+        self.assertEqual(evidence.weather_outlook["current"]["precip_mm"], 0.23)
+
+    def test_forecast_units_setting_overrides_home_assistant_units(self):
+        self.assertEqual(resolve_forecast_units("auto", "\u00b0F"), "US")
+        self.assertEqual(resolve_forecast_units("auto", "\u00b0C"), "METRIC")
+        self.assertEqual(resolve_forecast_units("us", "\u00b0C"), "US")
+        self.assertEqual(resolve_forecast_units("metric", "\u00b0F"), "METRIC")
+
+    def test_coordinator_applies_setting_and_home_assistant_units(self):
+        coordinator = object.__new__(RachioSupervisorCoordinator)
+        coordinator.hass = SimpleNamespace(
+            config=SimpleNamespace(units=SimpleNamespace(temperature_unit="\u00b0F")),
+        )
+        self.assertEqual(coordinator._forecast_units({}), "US")
+        self.assertEqual(coordinator._forecast_units({"rachio_forecast_units": "metric"}), "METRIC")
+
+    def test_setup_and_options_schema_offer_forecast_units(self):
+        schema = config_flow._flow_schema([("entry-1", "Rachio")])
+        markers = {key.value: key for key in schema.value}
+        self.assertEqual(markers["rachio_forecast_units"].default, "auto")
+
+    def test_forecast_days_are_ordered_and_past_days_skipped(self):
+        day = 86400
+        midnight = 1_800_000_000
+        outlook = build_rachio_weather_outlook(
+            {
+                "forecast": [
+                    {"time": midnight + 11 * day, "weatherSummary": "Later"},
+                    {"time": midnight + day, "weatherSummary": "Tomorrow"},
+                    {"time": midnight - day, "weatherSummary": "Yesterday"},
+                    {"time": midnight, "weatherSummary": "Today"},
+                ],
+            },
+            now=datetime.fromtimestamp(midnight + 3600, timezone.utc),
+        )
+        self.assertEqual(
+            [item["weather_summary"] for item in outlook["forecast"]],
+            ["Today", "Tomorrow"],
+        )
+        self.assertEqual(outlook["next"]["weather_summary"], "Tomorrow")
 
 
 if __name__ == "__main__":
