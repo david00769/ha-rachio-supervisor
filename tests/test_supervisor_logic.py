@@ -4283,5 +4283,60 @@ class DiagnosticsAndEntityTests(unittest.TestCase):
         self.assertEqual(entity.extra_state_attributes["controller_zone_id"], "zone-1")
 
 
+class WeatherUnitTests(unittest.TestCase):
+    def test_us_forecast_converts_temperature_and_precipitation_to_metric(self):
+        outlook = build_rachio_weather_outlook(
+            {
+                "current": {"currentTemperature": 59, "precipIntensity": 0.1},
+                "forecast": [{
+                    "temperatureMin": 32, "temperatureMax": 68, "calculatedPrecip": 0.5,
+                }],
+            },
+            units="US",
+        )
+        self.assertEqual(outlook["current"]["temperature_c"], 15)
+        self.assertAlmostEqual(outlook["current"]["precip_intensity_mm_per_hour"], 2.54)
+        self.assertEqual(outlook["next"]["low_temperature_c"], 0)
+        self.assertEqual(outlook["next"]["high_temperature_c"], 20)
+        self.assertEqual(outlook["next"]["precip_mm"], 12.7)
+        self.assertIn("15C", outlook["summary"])
+        self.assertFalse(outlook["used_for_actual_rain"])
+
+    def test_metric_forecast_values_are_preserved(self):
+        outlook = build_rachio_weather_outlook(
+            {"current": {"currentTemperature": 15, "calculatedPrecip": 2.5}},
+            units="METRIC",
+        )
+        self.assertEqual(outlook["current"]["temperature_c"], 15)
+        self.assertEqual(outlook["current"]["precip_mm"], 2.5)
+
+    def test_evidence_requests_us_units_and_normalizes_the_response(self):
+        requested_units = []
+
+        def forecast(_controller_id, *, units):
+            requested_units.append(units)
+            return {"current": {"currentTemperature": 59}}
+
+        client = SimpleNamespace(
+            list_person_devices=lambda: [{
+                "id": "controller-test", "name": "Test Controller",
+                "zones": [{"id": "zone-test", "name": "Test Zone", "enabled": True}],
+            }],
+            get_device_forecast=forecast,
+            list_device_events=lambda *_args, **_kwargs: [],
+            list_device_webhooks=lambda *_args: [],
+        )
+        linked = LinkedRachioEntities(
+            connectivity_entity_id=None, rain_entity_id=None, rain_delay_entity_id=None,
+            standby_entity_id=None, zone_switches=(), schedule_switches=(),
+            zone_entities=(), schedule_entities=(), all_entities=(),
+        )
+        evidence = build_rachio_evidence(
+            client, linked, 1, True, "Test", None, None, set(), set(), set(),
+        )
+        self.assertEqual(requested_units, ["US"])
+        self.assertEqual(evidence.weather_outlook["current"]["temperature_c"], 15)
+
+
 if __name__ == "__main__":
     unittest.main()

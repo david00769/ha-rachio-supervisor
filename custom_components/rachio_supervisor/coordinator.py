@@ -2576,7 +2576,9 @@ def _format_weather_amount(value: object, suffix: str) -> str | None:
     return f"{numeric:g}{suffix}"
 
 
-def _forecast_record(payload: object, label: str) -> dict[str, object] | None:
+def _forecast_record(
+    payload: object, label: str, units: str = "METRIC"
+) -> dict[str, object] | None:
     """Return a compact weather forecast record from one Rachio payload node."""
     if not isinstance(payload, dict):
         return None
@@ -2588,8 +2590,8 @@ def _forecast_record(payload: object, label: str) -> dict[str, object] | None:
         payload,
         ("temperature", "temp", "currentTemperature", "highTemperature"),
     )
-    high = _weather_scalar(payload, ("highTemperature", "temperatureHigh", "maxTemp"))
-    low = _weather_scalar(payload, ("lowTemperature", "temperatureLow", "minTemp"))
+    high = _weather_scalar(payload, ("highTemperature", "temperatureHigh", "temperatureMax", "maxTemp"))
+    low = _weather_scalar(payload, ("lowTemperature", "temperatureLow", "temperatureMin", "minTemp"))
     precip = _weather_scalar(
         payload,
         ("calculatedPrecip", "precipAccumulation", "precipTotal", "precipitation"),
@@ -2604,6 +2606,19 @@ def _forecast_record(payload: object, label: str) -> dict[str, object] | None:
     )
     station_id = _weather_scalar(payload, ("weatherStationId", "stationId"))
 
+    def metric(value, *, temperature=False):
+        number = _coerce_float(value)
+        if number is None:
+            return None
+        if units == "US":
+            return (number - 32) * 5 / 9 if temperature else number * 25.4
+        return number
+
+    temperature = metric(temperature, temperature=True)
+    high = metric(high, temperature=True)
+    low = metric(low, temperature=True)
+    precip = metric(precip)
+    intensity = metric(intensity)
     parts: list[str] = []
     if summary:
         parts.append(str(summary))
@@ -2652,6 +2667,8 @@ def _forecast_record(payload: object, label: str) -> dict[str, object] | None:
 
 def build_rachio_weather_outlook(
     forecast_payload: dict[str, object] | None,
+    *,
+    units: str = "METRIC",
 ) -> dict[str, object]:
     """Build a read-only weather outlook without treating forecasts as actual rain."""
     if not forecast_payload:
@@ -2668,12 +2685,12 @@ def build_rachio_weather_outlook(
             "forecast": [],
         }
 
-    current = _forecast_record(forecast_payload.get("current"), "current")
+    current = _forecast_record(forecast_payload.get("current"), "current", units)
     forecast_items = []
     raw_forecast = forecast_payload.get("forecast")
     if isinstance(raw_forecast, list):
         for index, item in enumerate(raw_forecast[:2]):
-            record = _forecast_record(item, "today" if index == 0 else "next")
+            record = _forecast_record(item, "today" if index == 0 else "next", units)
             if record:
                 forecast_items.append(record)
     next_record = forecast_items[1] if len(forecast_items) > 1 else (
@@ -3002,7 +3019,9 @@ def build_rachio_evidence(
     forecast_payload: dict[str, object] | None = None
     if callable(forecast_getter):
         try:
-            forecast_payload = forecast_getter(controller_id, units="METRIC")
+            # METRIC responses can contain unlabelled US values. Request US
+            # explicitly, then normalize to our Celsius/mm reporting contract.
+            forecast_payload = forecast_getter(controller_id, units="US")
             weather_source_probe = build_rachio_weather_probe(controller, forecast_payload)
         except RachioClientError as err:
             weather_source_probe = build_rachio_weather_probe(controller, None)
@@ -3015,7 +3034,7 @@ def build_rachio_evidence(
         weather_source_probe["reason"] = (
             "Rachio forecast/source probe unavailable in the current API adapter."
         )
-    weather_outlook = build_rachio_weather_outlook(forecast_payload)
+    weather_outlook = build_rachio_weather_outlook(forecast_payload, units="US")
     if weather_source_probe.get("status") == "forecast_unavailable":
         weather_outlook["reason"] = weather_source_probe.get(
             "reason",
