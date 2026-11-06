@@ -105,6 +105,23 @@ queried to expose source/provider hints and a read-only `Heat assist` weather
 outlook. Rachio forecast payloads are not used as actual rainfall because
 forecast precipitation and observed rainfall are different evidence classes.
 
+The forecast payload needs care, based on live sampling of one metric account
+(2026-11-07):
+
+- It carries no unit label, and `units=METRIC` and `units=US` both returned
+  Celsius-scale values, so the scale cannot be read from a response. The
+  `rachio_forecast_units` setting declares it: Automatic follows Home Assistant's
+  unit system. The request and the conversion use the same resolved value, and
+  the stored fields stay Celsius and mm. A US account's behaviour is unverified
+  and rests on one report.
+- It holds a pool of days in no order, with an arbitrary day moved to `current`.
+  `current` is therefore not always today, and today can be missing from
+  `forecast`. `_select_forecast_days` pools both and chooses by `time`, an integer
+  epoch in seconds at local midnight: today is the latest day begun within 25
+  hours, to cover daylight saving, and next is the first day ahead. `current` is
+  shown as now only when it is today, because `currentTemperature` appears only on
+  that node; otherwise now falls back to today's range.
+
 ## Moisture write boundary
 
 Moisture write-back updates Rachio's zone moisture estimate. It never starts
