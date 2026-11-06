@@ -2611,7 +2611,9 @@ def _forecast_record(
         if number is None:
             return None
         if units == "US":
-            return (number - 32) * 5 / 9 if temperature else number * 25.4
+            if temperature:
+                return round((number - 32) * 5 / 9, 1)
+            return round(number * 25.4, 2)
         return number
 
     temperature = metric(temperature, temperature=True)

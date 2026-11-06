@@ -4302,6 +4302,23 @@ class WeatherUnitTests(unittest.TestCase):
         self.assertIn("15C", outlook["summary"])
         self.assertFalse(outlook["used_for_actual_rain"])
 
+    def test_us_forecast_conversions_are_rounded_for_display(self):
+        outlook = build_rachio_weather_outlook(
+            {
+                "current": {"currentTemperature": 61, "precipIntensity": 0.07},
+                "forecast": [{
+                    "temperatureMin": 47, "temperatureMax": 73, "calculatedPrecip": 0.13,
+                }],
+            },
+            units="US",
+        )
+        self.assertEqual(outlook["current"]["temperature_c"], 16.1)
+        self.assertEqual(outlook["current"]["precip_intensity_mm_per_hour"], 1.78)
+        self.assertEqual(outlook["next"]["low_temperature_c"], 8.3)
+        self.assertEqual(outlook["next"]["high_temperature_c"], 22.8)
+        self.assertEqual(outlook["next"]["precip_mm"], 3.3)
+        self.assertIn("8.3C-22.8C, 3.3 mm", outlook["next"]["summary"])
+
     def test_metric_forecast_values_are_preserved(self):
         outlook = build_rachio_weather_outlook(
             {"current": {"currentTemperature": 15, "calculatedPrecip": 2.5}},

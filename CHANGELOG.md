@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Fixed Heat Assist weather showing Fahrenheit values as Celsius: forecasts are
+  now requested in US units and converted to the existing Celsius and mm fields,
+  and `temperatureMin`/`temperatureMax` are recognized. Thanks to lunaroja (#1).
 - Added human-readable site-level data-warning attributes for dashboard
   overlays: `data_warning_summary`, `data_warning_count`, and structured
   `data_warnings` entries. Moisture sensor warnings are grouped by operator
