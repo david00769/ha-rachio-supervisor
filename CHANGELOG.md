@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.2.12 - 2026-11-15
 
 - Fixed Heat Assist weather showing Fahrenheit values as Celsius on US accounts:
   a new "Rachio account forecast units" setting (automatic by default, following
