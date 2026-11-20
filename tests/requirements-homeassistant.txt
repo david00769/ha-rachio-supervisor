@@ -1,0 +1,2 @@
+# Separate offline real-HA suite; Python 3.14 required.
+homeassistant==2026.10.4

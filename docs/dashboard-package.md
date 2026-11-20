@@ -123,7 +123,7 @@ diagnostic panel:
 - one picture per zone
 - one compact zone name
 - icon badges for water/skip, Supervisor, and moisture
-- next run shown as a short token when HA/Rachio exposes it
+- next run shown as a short token from Rachio's 14-day `upcoming_runs` forecast
 - quick run exposed as a confirmation-gated action on real live zone cards
 - plant/soil/drip/slope notes kept to one small line or a lower detail panel
 
@@ -137,6 +137,11 @@ and upcoming calendar context:
 The Supervisor dashboard uses the same mental model: zones are the primary
 surface, weather and schedule evidence explain the zone badges, and raw audit
 detail stays below the operator controls.
+
+For the schedule calendar, add the integration's `Upcoming runs` calendar
+entity to a native Calendar card. It shows Rachio's predicted runs and
+predicted skips for the next two weeks; they are predictions, not a record of
+what watered, and Flex predictions move with the weather.
 
 The integration ships the `rachio-supervisor-zone-grid-card` Lovelace module
 for this purpose. Add this dashboard resource:

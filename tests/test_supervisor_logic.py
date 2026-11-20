@@ -140,6 +140,7 @@ def _install_homeassistant_stubs() -> None:
 
     class Platform:
         SENSOR = "sensor"
+        CALENDAR = "calendar"
 
     const.Platform = Platform
     sys.modules["homeassistant.const"] = const
@@ -367,6 +368,22 @@ def _install_homeassistant_stubs() -> None:
 
     util_pkg.slugify = lambda value: str(value).strip().lower().replace(" ", "_")
 
+    calendar_component = types.ModuleType("homeassistant.components.calendar")
+
+    @dataclass
+    class CalendarEvent:
+        start: datetime
+        end: datetime
+        summary: str
+        description: str | None = None
+
+    class CalendarEntity:
+        pass
+
+    calendar_component.CalendarEvent = CalendarEvent
+    calendar_component.CalendarEntity = CalendarEntity
+    sys.modules["homeassistant.components.calendar"] = calendar_component
+
     sensor_component = types.ModuleType("homeassistant.components.sensor")
 
     @dataclass(frozen=True, kw_only=True)
@@ -479,7 +496,6 @@ from custom_components.rachio_supervisor.coordinator import (
     resolve_moisture_evidence,
     resolve_rain_actuals_entity,
     resolve_weather_underground_pws_actuals,
-    schedule_rule_next_run,
     schedule_rule_watering_days,
 )
 from custom_components.rachio_supervisor.discovery import (
@@ -571,6 +587,7 @@ class ZonePhotoImportTests(unittest.TestCase):
                                 "name": "Pots - Dawn Micro",
                                 "enabled": True,
                                 "totalDuration": 180,
+                                "zones": [{"zoneId": "zone-1", "duration": 180}],
                             }
                         ],
                     }
@@ -1408,6 +1425,7 @@ class QuickRunServiceTests(unittest.TestCase):
             data=SimpleNamespace(
                 site_name="Demo Site",
                 schedule_snapshots=(schedule,),
+                zone_overview_items=({"controller_zone_id": "zone-1", "zone_entity_id": "switch.zone_pots"},),
             ),
             async_request_refresh=_refresh,
         )
@@ -2490,7 +2508,7 @@ class RuntimeHealthAndMoistureTests(unittest.TestCase):
         self.assertIn("2026-05-06", evidence)
         self.assertIn("Review catch-up", action)
 
-    def test_schedule_rule_metadata_discovers_zone_days_and_next_run(self) -> None:
+    def test_schedule_rule_metadata_discovers_zone_and_days(self) -> None:
         controller = {
             "timeZone": "Australia/Melbourne",
             "zones": [{"id": "zone-grass", "name": "Grass", "enabled": True}],
@@ -2511,7 +2529,7 @@ class RuntimeHealthAndMoistureTests(unittest.TestCase):
             zone_switches=("switch.rachio_grass",),
             schedule_switches=(),
             zone_entities=(
-                ZoneEntityRef("switch.rachio_grass", "Rachio Controller Grass", None),
+                ZoneEntityRef("switch.rachio_grass", "Rachio Controller Grass", "controller-zone-grass"),
             ),
             schedule_entities=(),
             all_entities=("switch.rachio_grass",),
@@ -2519,16 +2537,9 @@ class RuntimeHealthAndMoistureTests(unittest.TestCase):
 
         zone_id = match_controller_zone_from_rule(rule, controller)
         zone_entity = match_zone_entity_by_controller_zone(zone_id, controller, linked)
-        next_run = schedule_rule_next_run(
-            rule,
-            controller,
-            current=datetime(2026, 5, 11, 12, 0, tzinfo=timezone.utc),
-        )
-
         self.assertEqual(zone_id, "zone-grass")
         self.assertEqual(zone_entity.entity_id, "switch.rachio_grass")
         self.assertEqual(schedule_rule_watering_days(rule), ("T", "F"))
-        self.assertTrue(next_run.startswith("2026-05-12T02:00:00"))
 
     def test_rachio_evidence_matches_schedule_to_zone_id_before_name_guess(self) -> None:
         class _Client:
@@ -2570,7 +2581,7 @@ class RuntimeHealthAndMoistureTests(unittest.TestCase):
             zone_switches=("switch.rachio_grass",),
             schedule_switches=("switch.rachio_lawn_summer_green_schedule",),
             zone_entities=(
-                ZoneEntityRef("switch.rachio_grass", "Rachio Controller Grass", None),
+                ZoneEntityRef("switch.rachio_grass", "Rachio Controller Grass", "controller-zone-grass"),
             ),
             schedule_entities=(
                 ScheduleEntityRef(
@@ -2602,25 +2613,7 @@ class RuntimeHealthAndMoistureTests(unittest.TestCase):
         self.assertEqual(schedule.controller_zone_id, "zone-grass")
         self.assertEqual(schedule.zone_entity_id, "switch.rachio_grass")
         self.assertEqual(schedule.watering_days, ("T", "F"))
-        self.assertTrue(schedule.next_run_at)
-
-    def test_interval_schedule_next_run_uses_rachio_start_date(self) -> None:
-        controller = {"timeZone": "Australia/Melbourne", "zones": []}
-        rule = {
-            "scheduleJobTypes": ["INTERVAL_14"],
-            "startDate": 1778248800000,
-            "startHour": 2,
-            "startMinute": 0,
-            "summary": "Every 14 days at 2:00 AM",
-        }
-
-        next_run = schedule_rule_next_run(
-            rule,
-            controller,
-            current=datetime(2026, 5, 11, 12, 0, tzinfo=timezone.utc),
-        )
-
-        self.assertTrue(next_run.startswith("2026-05-23T02:00:00"))
+        self.assertIsNone(schedule.next_run_at)  # No official forecast from this fixture.
 
     def test_zone_overview_uses_rule_metadata_and_does_not_invent_plant_note(self) -> None:
         schedule = ScheduleSnapshot(
@@ -4499,6 +4492,455 @@ class WeatherUnitTests(unittest.TestCase):
             ["Today", "Tomorrow"],
         )
         self.assertEqual(outlook["next"]["weather_summary"], "Tomorrow")
+
+
+
+
+class ComprehensiveReportingTests(unittest.TestCase):
+    """Synthetic controller fixtures exercise public data paths without watering."""
+
+    def setUp(self):
+        self.reporting = importlib.import_module(
+            "custom_components.rachio_supervisor.reporting"
+        )
+        self.calendar = importlib.import_module(
+            "custom_components.rachio_supervisor.calendar"
+        )
+        self.controller = {
+            "id": "controller-test",
+            "name": "Test Controller",
+            "zones": [
+                {"id": f"zone-{i}", "name": f"Zone {i}", "enabled": i != 5}
+                for i in range(1, 6)
+            ],
+            "scheduleRules": [
+                {
+                    "id": "rule-fixed",
+                    "name": "Shared Name",
+                    "enabled": True,
+                    "zones": [
+                        {"zoneId": "zone-1", "duration": 1200},
+                        {"zoneId": "zone-2", "duration": 2400},
+                    ],
+                    "totalDuration": 3600,
+                }
+            ],
+            "flexScheduleRules": [
+                {
+                    "id": "rule-flex",
+                    "name": "Shared Name",
+                    "enabled": True,
+                    "zones": [{"zoneId": "zone-3", "duration": 960}],
+                    "totalDuration": 960,
+                }
+            ],
+        }
+        self.linked = LinkedRachioEntities(
+            connectivity_entity_id=None,
+            rain_entity_id=None,
+            rain_delay_entity_id=None,
+            standby_entity_id=None,
+            zone_switches=tuple(f"switch.zone_{i}" for i in range(1, 5)),
+            schedule_switches=("switch.fixed", "switch.flex"),
+            zone_entities=tuple(
+                ZoneEntityRef(f"switch.zone_{i}", f"Zone {i}", f"device-zone-{i}")
+                for i in range(1, 5)
+            ),
+            schedule_entities=(
+                ScheduleEntityRef("switch.fixed", "Shared Name", "rule-fixed"),
+                ScheduleEntityRef("switch.flex", "Shared Name", "rule-flex"),
+            ),
+            all_entities=(),
+        )
+        self.raw = [
+            {
+                "startTime": "2026-11-08T05:17:00-08:00",
+                "endTime": "2026-11-08T06:03:00-08:00",
+                "scheduleRuleId": "rule-flex",
+                "scheduleName": "Shared Name",
+                "skipped": False,
+                "cycleSoak": True,
+                "totalDuration": 960,
+                "zones": [
+                    {
+                        "zoneId": "zone-3",
+                        "zoneNumber": 3,
+                        "zoneName": "Zone 3",
+                        "duration": 960,
+                    }
+                ],
+            }
+        ]
+        self.client = SimpleNamespace(
+            list_person_devices=lambda: [self.controller],
+            list_device_events=lambda *_a, **_kw: [],
+            list_device_webhooks=lambda *_a: [],
+            list_upcoming_runs=lambda *_a: self.raw,
+        )
+        self.hass = SimpleNamespace(
+            states=SimpleNamespace(get=lambda _id: None),
+            config=SimpleNamespace(
+                path=lambda *parts: "/nonexistent/" + "/".join(parts)
+            ),
+        )
+
+    def evidence(self):
+        return build_rachio_evidence(
+            self.client, self.linked, 4, True, "Test", None, None, set(), set(), set()
+        )
+
+    def rows(self, evidence):
+        return build_zone_overview_items(
+            self.hass,
+            evidence.schedule_snapshots,
+            physical_zones=evidence.physical_zones,
+            upcoming_runs=evidence.upcoming_runs,
+            upcoming_runs_status=evidence.upcoming_runs_status,
+        )
+
+    def test_flex_and_fixed_discovered_once_with_stable_schedule_ids(self):
+        self.controller["scheduleRules"].append(self.controller["flexScheduleRules"][0])
+        evidence = self.evidence()
+        self.assertEqual(len(evidence.schedule_snapshots), 2)
+        self.assertEqual(
+            {s.rule_id: s.schedule_entity_id for s in evidence.schedule_snapshots},
+            {"rule-fixed": "switch.fixed", "rule-flex": "switch.flex"},
+        )
+
+    def test_multi_zone_schedule_cannot_become_a_single_moisture_write_target(self):
+        schedule = next(
+            s for s in self.evidence().schedule_snapshots if s.rule_id == "rule-fixed"
+        )
+        self.assertIsNone(schedule.controller_zone_id)
+        self.assertIsNone(schedule.zone_entity_id)
+        self.assertEqual(schedule.moisture_write_back_ready, "zone_unresolved")
+
+    def test_physical_inventory_and_per_zone_durations(self):
+        rows = self.rows(self.evidence())
+        self.assertEqual(
+            [r["controller_zone_id"] for r in rows], [f"zone-{i}" for i in range(1, 5)]
+        )
+        self.assertEqual([r["quick_run_minutes"] for r in rows], [20, 40, 16, None])
+        self.assertEqual(rows[3]["schedule_ids"], [])
+        self.assertEqual(rows[0]["zone_entity_id"], "switch.zone_1")
+
+    def test_shared_zone_appears_once_with_all_memberships(self):
+        self.controller["flexScheduleRules"][0]["zones"].append(
+            {"zoneId": "zone-1", "duration": 180}
+        )
+        rows = self.rows(self.evidence())
+        self.assertEqual(len(rows), 4)
+        self.assertEqual(set(rows[0]["schedule_ids"]), {"rule-fixed", "rule-flex"})
+        self.assertIsNone(
+            rows[0]["quick_run_minutes"]
+        )  # Multiple defaults would be ambiguous.
+
+    def test_no_date_is_synthesized_from_rule_or_ha_attributes(self):
+        self.raw.clear()
+        self.controller["scheduleRules"][0].update(
+            startHour=7,
+            startMinute=0,
+            summary="Every day",
+            scheduleJobTypes=["DAY_OF_WEEK_1"],
+        )
+        self.hass.states.get = lambda _id: SimpleNamespace(
+            state="off", attributes={"next_run": "Tomorrow"}
+        )
+        rows = self.rows(self.evidence())
+        self.assertTrue(all(row["next_run"] == "not_reported" for row in rows))
+
+    def test_official_next_run_keeps_soak_window_and_watering_separate(self):
+        row = self.rows(self.evidence())[2]
+        self.assertEqual(row["next_run"], "2026-11-08T05:17:00-08:00")
+        self.assertEqual(row["next_run_watering_seconds"], 960)
+        self.assertEqual(row["next_run_elapsed_seconds"], 2760)
+        self.assertTrue(row["next_run_cycle_soak"])
+
+    def test_skip_does_not_invent_duration_or_become_next_watering(self):
+        skip = dict(self.raw[0], skipped=True, skipCause="RAIN", zones=[])
+        skip.pop("totalDuration")
+        skip.pop("cycleSoak")
+        self.raw.insert(
+            0,
+            dict(
+                skip,
+                startTime="2026-11-07T05:17:00-08:00",
+                endTime="2026-11-07T06:03:00-08:00",
+            ),
+        )
+        evidence = self.evidence()
+        self.assertIsNone(evidence.upcoming_runs[0]["watering_seconds"])
+        self.assertIsNone(evidence.upcoming_runs[0]["cycle_soak"])
+        row = self.rows(evidence)[2]
+        self.assertEqual(len(row["predicted_skips"]), 1)
+        self.assertEqual(row["next_run"], self.raw[1]["startTime"])
+
+    def test_endpoint_failure_is_not_an_empty_success_or_evidence_failure(self):
+        def fail(*_args):
+            raise coordinator_module.RachioClientError("Forecast unavailable")
+
+        self.client.list_upcoming_runs = fail
+        evidence = self.evidence()
+        self.assertEqual(evidence.upcoming_runs_status, "unavailable")
+        self.assertEqual(len(evidence.schedule_snapshots), 2)
+        self.assertEqual(evidence.upcoming_runs, ())
+
+    def test_valid_empty_forecast_is_available(self):
+        self.raw.clear()
+        evidence = self.evidence()
+        self.assertEqual(evidence.upcoming_runs_status, "available")
+        self.assertEqual(evidence.upcoming_runs, ())
+
+    def test_malformed_forecasts_fail_instead_of_silently_dropping_records(self):
+        for payload in (
+            {},
+            [None],
+            [dict(self.raw[0], startTime="Tomorrow")],
+            [dict(self.raw[0], startTime="2026-11-08T05:17:00")],
+            [dict(self.raw[0], skipped="false")],
+            [dict(self.raw[0], zones=[{"zoneId": "zone-3", "duration": float("nan")}])],
+        ):
+            with self.subTest(payload=payload), self.assertRaises(ValueError):
+                self.reporting.normalize_upcoming_runs(payload)
+
+    def test_calendar_filters_overlap_and_reports_predicted_skips(self):
+        self.raw.insert(
+            0,
+            dict(
+                self.raw[0],
+                skipped=True,
+                skipCause="WIND",
+                zones=[],
+                startTime="2026-11-07T05:17:00-08:00",
+                endTime="2026-11-07T06:03:00-08:00",
+            ),
+        )
+        evidence = self.evidence()
+        coordinator = SimpleNamespace(
+            entry=SimpleNamespace(entry_id="entry-test", title="Test"),
+            data=evidence,
+            last_update_success=True,
+        )
+        entity = self.calendar.RachioUpcomingRunsCalendar(coordinator)
+        with patch.object(
+            self.calendar.dt_util,
+            "now",
+            return_value=datetime(2026, 11, 6, tzinfo=timezone.utc),
+        ):
+            self.assertEqual(entity.event.start.isoformat(), self.raw[1]["startTime"])
+        events = asyncio.run(
+            entity.async_get_events(
+                self.hass,
+                datetime(2026, 11, 7, tzinfo=timezone.utc),
+                datetime(2026, 11, 9, tzinfo=timezone.utc),
+            )
+        )
+        self.assertEqual(len(events), 2)
+        self.assertTrue(events[0].summary.startswith("Predicted skip:"))
+        self.assertIn("16 minutes", events[1].description)
+        self.assertIn("46 minutes", events[1].description)
+        self.assertEqual(
+            asyncio.run(
+                entity.async_get_events(
+                    self.hass,
+                    datetime(2026, 12, 1, tzinfo=timezone.utc),
+                    datetime(2026, 12, 2, tzinfo=timezone.utc),
+                )
+            ),
+            [],
+        )
+
+    def test_calendar_failure_does_not_return_empty_success(self):
+        evidence = self.evidence()
+        evidence.upcoming_runs_status = "unavailable"
+        entity = self.calendar.RachioUpcomingRunsCalendar(
+            SimpleNamespace(
+                entry=SimpleNamespace(entry_id="entry-test", title="Test"),
+                data=evidence,
+                last_update_success=True,
+            )
+        )
+        self.assertFalse(entity.available)
+        self.assertIsNone(entity.event)
+        with self.assertRaises(integration_init.HomeAssistantError):
+            asyncio.run(
+                entity.async_get_events(
+                    self.hass,
+                    datetime(2026, 11, 1, tzinfo=timezone.utc),
+                    datetime(2026, 11, 9, tzinfo=timezone.utc),
+                )
+            )
+
+    def test_forecast_only_refresh_is_shared_and_clears_failed_cache(self):
+        coordinator = RachioSupervisorCoordinator(
+            self.hass, SimpleNamespace(entry_id="test", title="Test")
+        )
+        coordinator.hass = self.hass
+        coordinator._cached_evidence = self.evidence()
+        calls = []
+
+        async def executor(func, *args):
+            calls.append(func)
+            return func(*args)
+
+        self.hass.async_add_executor_job = executor
+        now = datetime(2026, 11, 1, tzinfo=timezone.utc)
+        asyncio.run(coordinator._async_refresh_upcoming_runs(self.client, now))
+        self.assertEqual(len(calls), 1)
+        self.client.list_upcoming_runs = lambda *_a: {"bad": "shape"}
+        asyncio.run(coordinator._async_refresh_upcoming_runs(self.client, now))
+        self.assertEqual(
+            coordinator._cached_evidence.upcoming_runs_status, "unavailable"
+        )
+        self.assertEqual(coordinator._cached_evidence.upcoming_runs, ())
+        self.assertTrue(
+            all(
+                s.next_run_at is None
+                for s in coordinator._cached_evidence.schedule_snapshots
+            )
+        )
+
+    def test_unknown_zone_id_does_not_fall_back_to_matching_name(self):
+        linked = replace(
+            self.linked,
+            zone_entities=(ZoneEntityRef("switch.wrong", "Zone 1", "other-zone"),),
+        )
+        self.assertIsNone(
+            match_zone_entity_by_controller_zone("zone-1", self.controller, linked)
+        )
+
+    def test_calendar_and_native_report_share_forecast_without_extra_requests(self):
+        count = []
+        self.client.list_upcoming_runs = lambda *_a: count.append(True) or self.raw
+        evidence = self.evidence()
+        entity = self.calendar.RachioUpcomingRunsCalendar(
+            SimpleNamespace(
+                entry=SimpleNamespace(entry_id="test", title="Test"),
+                data=evidence,
+                last_update_success=True,
+            )
+        )
+        self.rows(evidence)
+        asyncio.run(
+            entity.async_get_events(
+                self.hass,
+                datetime(2026, 11, 1, tzinfo=timezone.utc),
+                datetime(2026, 11, 9, tzinfo=timezone.utc),
+            )
+        )
+        self.assertEqual(len(count), 1)
+
+    def test_manual_run_targets_second_member_of_multi_zone_schedule(self):
+        evidence = self.evidence()
+        calls = []
+
+        async def service(domain, action, data, **kwargs):
+            calls.append((domain, action, data))
+
+        async def refresh():
+            pass
+
+        hass = SimpleNamespace(
+            data={
+                DOMAIN: {
+                    "test": SimpleNamespace(
+                        data=SimpleNamespace(
+                            site_name="Test",
+                            schedule_snapshots=evidence.schedule_snapshots,
+                            zone_overview_items=self.rows(evidence),
+                        ),
+                        async_request_refresh=refresh,
+                    )
+                }
+            },
+            services=SimpleNamespace(async_call=service),
+        )
+        asyncio.run(
+            integration_init._async_handle_quick_run_zone(
+                hass,
+                SimpleNamespace(
+                    data={
+                        "zone_entity_id": "switch.zone_2",
+                        "schedule_entity_id": "switch.fixed",
+                        "duration_minutes": 4,
+                    }
+                ),
+            )
+        )
+        self.assertEqual(
+            calls,
+            [
+                (
+                    "rachio",
+                    "start_watering",
+                    {"entity_id": "switch.zone_2", "duration": 4},
+                )
+            ],
+        )
+
+    def test_forecast_sort_uses_instants_across_dst_fallback(self):
+        first = dict(self.raw[0], startTime="2026-11-01T01:50:00-07:00",
+                     endTime="2026-11-01T02:50:00-08:00")
+        second = dict(self.raw[0], startTime="2026-11-01T01:10:00-08:00",
+                      endTime="2026-11-01T02:10:00-08:00")
+        runs = self.reporting.normalize_upcoming_runs([second, first])
+        self.assertEqual(runs[0]["start"], first["startTime"])
+        self.assertEqual(runs[0]["elapsed_seconds"], 7200)
+
+    def test_registry_id_prefix_collision_does_not_select_wrong_zone(self):
+        linked = replace(
+            self.linked,
+            zone_entities=(
+                ZoneEntityRef("switch.wrong", "Zone 1", "device-zone-10"),
+                ZoneEntityRef("switch.right", "Zone 1", "device-zone-1"),
+            ),
+        )
+        result = match_zone_entity_by_controller_zone("zone-1", self.controller, linked)
+        self.assertEqual(result.entity_id, "switch.right")
+
+    def test_upcoming_adapter_uses_documented_device_endpoint_and_rejects_bad_shape(
+        self,
+    ):
+        api = importlib.import_module("custom_components.rachio_supervisor.rachio_api")
+        client = api.RachioClient("synthetic-test-token")
+        with patch.object(client, "_http_json", return_value=self.raw) as request:
+            self.assertEqual(client.list_upcoming_runs("controller-test"), self.raw)
+            request.assert_called_once_with(
+                "https://api.rach.io/1/public/device/controller-test/upcoming_runs"
+            )
+        with (
+            patch.object(client, "_http_json", return_value={}),
+            self.assertRaises(api.RachioClientError),
+        ):
+            client.list_upcoming_runs("controller-test")
+
+    def test_explicit_unknown_zone_cannot_fall_back_to_schedule(self):
+        evidence = self.evidence()
+        hass = SimpleNamespace(
+            data={
+                DOMAIN: {
+                    "test": SimpleNamespace(
+                        data=SimpleNamespace(
+                            site_name="Test",
+                            schedule_snapshots=evidence.schedule_snapshots,
+                            zone_overview_items=self.rows(evidence),
+                        )
+                    )
+                }
+            }
+        )
+        with self.assertRaises(integration_init.HomeAssistantError):
+            asyncio.run(
+                integration_init._async_handle_quick_run_zone(
+                    hass,
+                    SimpleNamespace(
+                        data={
+                            "zone_entity_id": "switch.unknown",
+                            "schedule_entity_id": "switch.flex",
+                        }
+                    ),
+                )
+            )
 
 
 if __name__ == "__main__":

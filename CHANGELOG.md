@@ -1,5 +1,25 @@
 # Changelog
 
+## Unreleased
+
+- Added Flex schedule discovery (`flexScheduleRules`) alongside fixed schedules.
+- `Zone overview` now has one row per enabled physical zone, with every schedule
+  it belongs to and its own watering duration from the next predicted run, or
+  from its only schedule. A schedule-level moisture mapping is no longer shown
+  on one member of a multi-zone schedule. Zones in no enabled schedule still
+  appear.
+- Added a read-only `Upcoming runs` calendar from Rachio's official 14-day
+  `upcoming_runs` forecast, with predicted skips and reasons, cycle/soak and
+  per-zone watering seconds. The forecast refreshes at most every 15 minutes
+  and is shared by the calendar and the zone rows; a failed request shows as
+  unavailable rather than as an empty forecast.
+- Next run now comes only from that forecast; it is no longer computed from
+  schedule rules or read from Home Assistant attributes.
+- Behaviour change: schedule and zone entities are matched by Home Assistant
+  registry id, not by name, and Quick Run by `zone_entity_id` requires a zone
+  resolved to one physical Rachio zone.
+- Thanks to lunaroja for this work.
+
 ## 0.2.12 - 2026-11-15
 
 - Fixed Heat Assist weather showing Fahrenheit values as Celsius on US accounts:

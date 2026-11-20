@@ -745,7 +745,7 @@ class RachioSupervisorZoneGridCard extends HTMLElement {
   _zoneTemplate(zone, index) {
     const minutes = this._durationFor(zone, index);
     const days = Array.isArray(zone.watering_days) ? zone.watering_days : [];
-    const canRun = Boolean(zone.zone_entity_id || zone.schedule_entity_id || zone.schedule_name);
+    const canRun = Boolean(zone.zone_entity_id);
     const imagePath = zone.image_path || zone.fallback_image_path || "";
     const fallbackPath = zone.fallback_image_path || "";
     const photoError = this._photoErrorLabel(zone);
@@ -864,10 +864,10 @@ class RachioSupervisorZoneGridCard extends HTMLElement {
     if (zone.zone_entity_id) {
       data.zone_entity_id = zone.zone_entity_id;
     }
-    if (zone.schedule_entity_id) {
+    if (!zone.zone_entity_id && zone.schedule_entity_id) {
       data.schedule_entity_id = zone.schedule_entity_id;
     }
-    if (zone.schedule_name) {
+    if (!zone.zone_entity_id && zone.schedule_name) {
       data.schedule_name = zone.schedule_name;
     }
     this._pendingQuickRunIndex = index;

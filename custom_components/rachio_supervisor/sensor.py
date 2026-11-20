@@ -567,6 +567,11 @@ class RachioSupervisorSensor(RachioSupervisorEntity, SensorEntity):
             photo_counts = _photo_import_counts(zones)
             return {
                 "zones": zones,
+                "upcoming_runs": list(data.upcoming_runs),
+                "upcoming_runs_status": data.upcoming_runs_status,
+                "upcoming_runs_updated_at": data.upcoming_runs_updated_at,
+                "upcoming_runs_source": "rachio_upcoming_runs",
+                "forecast_days": 14,
                 "image_path_convention": "/local/rachio-supervisor/zones/<zone-slug>.jpg",
                 "fallback_image_path": "/rachio_supervisor/zone-placeholder.svg",
                 "quick_run_service": "rachio_supervisor.quick_run_zone",

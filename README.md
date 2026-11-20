@@ -26,11 +26,18 @@ still keeping the default install observe-first:
   registry
 - site-level supervisor sensors expose health, linked controller posture,
   actual-rain input status, and discovered zone counts
-- the site-level `Zone overview` sensor exposes a visual dashboard payload for
-  each discovered zone: resolved image path/source, optional Rachio-import
-  status, zone/schedule ids, quick-run minutes, next run if HA exposes one, day
-  chips, water/skip badge, rain-skip state, Supervisor badge, moisture band,
+- the site-level `Zone overview` sensor exposes a visual dashboard payload with
+  one row per enabled physical zone (a zone in several schedules appears once,
+  listing every schedule it belongs to): resolved image path/source, optional
+  Rachio-import status, zone/schedule ids, per-zone quick-run minutes, the next
+  run and predicted skips from Rachio's official 14-day forecast, day chips,
+  water/skip badge, rain-skip state, Supervisor badge, moisture band,
   flow-alert state, and plant/detail notes
+- fixed and Flex schedules are both discovered; schedules and zones are matched
+  to Home Assistant entities by their registry ids, not by name
+- a read-only `Upcoming runs` calendar entity shows Rachio's 14-day forecast,
+  with predicted skips labelled; these are predictions, not watering evidence,
+  and the forecast refreshes at most every 15 minutes
 - the integration serves a lightweight Lovelace custom card at
   `/rachio_supervisor/rachio-supervisor-zone-grid-card.js`; this is the
   recommended zone-first dashboard surface and renders zone photos, compact

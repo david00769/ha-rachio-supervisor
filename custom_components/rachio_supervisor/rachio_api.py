@@ -17,6 +17,7 @@ DEVICE_EVENTS_URL = (
     "?startTime={start_ms}&endTime={end_ms}"
 )
 DEVICE_FORECAST_URL = "https://api.rach.io/1/public/device/{device_id}/forecast?units={units}"
+DEVICE_UPCOMING_RUNS_URL = "https://api.rach.io/1/public/device/{device_id}/upcoming_runs"
 DEVICE_WEBHOOKS_URL = "https://api.rach.io/1/public/notification/{device_id}/webhook"
 
 
@@ -92,6 +93,13 @@ class RachioClient:
             DEVICE_EVENTS_URL.format(device_id=device_id, start_ms=start_ms, end_ms=end_ms)
         )
         return data if isinstance(data, list) else []
+
+    def list_upcoming_runs(self, device_id: str) -> list[dict[str, Any]]:
+        """Return the vendor's current 14-day forecast, including predicted skips."""
+        data = self._http_json(DEVICE_UPCOMING_RUNS_URL.format(device_id=device_id))
+        if not isinstance(data, list):
+            raise RachioClientError("Unexpected upcoming runs response shape")
+        return data
 
     def get_device_forecast(self, device_id: str, *, units: str = "METRIC") -> dict[str, Any]:
         """Return Rachio's current/predicted forecast payload for diagnostics."""

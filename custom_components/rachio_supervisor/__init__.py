@@ -29,7 +29,7 @@ from .const import (
 from .coordinator import RachioSupervisorCoordinator, ScheduleSnapshot
 from .rachio_api import RachioClient
 
-PLATFORMS: list[Platform] = [Platform.SENSOR]
+PLATFORMS: list[Platform] = [Platform.SENSOR, Platform.CALENDAR]
 STATIC_REGISTERED_KEY = f"{DOMAIN}_static_paths_registered"
 
 
@@ -179,16 +179,22 @@ async def _async_handle_quick_run_zone(
     duration_minutes = int(call.data.get("duration_minutes", 3))
     duration_minutes = max(1, min(60, duration_minutes))
     site_name = call.data.get("site_name")
-    coordinator, schedule = _find_zone_quick_run_target(
-        coordinators,
-        schedule_name=schedule_name,
-        schedule_entity_id=schedule_entity_id,
-        zone_entity_id=zone_entity_id,
-        site_name=site_name,
-    )
-    target_entity_id = schedule.zone_entity_id or zone_entity_id
-    if not target_entity_id:
-        raise HomeAssistantError("The selected schedule does not resolve to a zone entity.")
+    if zone_entity_id:
+        matches = [(coordinator, row) for coordinator in coordinators.values()
+            if not site_name or coordinator.data.site_name == site_name
+            for row in getattr(coordinator.data, "zone_overview_items", ())
+            if row.get("zone_entity_id") == zone_entity_id and row.get("controller_zone_id")]
+        if len(matches) != 1:
+            raise HomeAssistantError("Provide one resolved physical zone entity and site.")
+        coordinator, _row = matches[0]
+        target_entity_id = zone_entity_id
+    else:
+        coordinator, schedule = _find_zone_quick_run_target(
+            coordinators, schedule_name=schedule_name,
+            schedule_entity_id=schedule_entity_id, zone_entity_id=None, site_name=site_name)
+        target_entity_id = schedule.zone_entity_id
+        if not target_entity_id:
+            raise HomeAssistantError("The selected schedule does not resolve to a zone entity.")
     await hass.services.async_call(
         "rachio",
         "start_watering",

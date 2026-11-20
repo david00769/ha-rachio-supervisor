@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import datetime, timedelta, timezone
 import json
 from pathlib import Path
@@ -10,7 +10,6 @@ import re
 import urllib.error
 import urllib.parse
 import urllib.request
-from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from homeassistant.config_entries import ConfigEntry, ConfigEntryState
 from homeassistant.const import CONF_API_KEY
@@ -18,6 +17,8 @@ from homeassistant.const import STATE_UNAVAILABLE, STATE_UNKNOWN
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator
 from homeassistant.util import dt as dt_util
+
+from .reporting import normalize_upcoming_runs, positive_seconds
 
 from .const import (
     CONF_ALLOW_MOISTURE_WRITE_BACK,
@@ -268,6 +269,10 @@ class RachioEvidenceSnapshot:
     schedule_snapshots: tuple[ScheduleSnapshot, ...]
     weather_source_probe: dict[str, object] | None = None
     weather_outlook: dict[str, object] | None = None
+    physical_zones: tuple[dict[str, object], ...] = ()
+    upcoming_runs: tuple[dict[str, object], ...] = ()
+    upcoming_runs_status: str = "unavailable"
+    upcoming_runs_updated_at: str | None = None
 
 
 @dataclass(slots=True)
@@ -374,6 +379,9 @@ class SupervisorSnapshot:
     weather_outlook: dict[str, object] | None
     discovered_entities: dict[str, object]
     schedule_snapshots: tuple[ScheduleSnapshot, ...]
+    upcoming_runs: tuple[dict[str, object], ...] = ()
+    upcoming_runs_status: str = "unavailable"
+    upcoming_runs_updated_at: str | None = None
     rain_source_mode: str = DEFAULT_RAIN_SOURCE_MODE
     rain_source_label: str = "unconfigured"
     rain_source_observed_at: str | None = None
@@ -712,6 +720,15 @@ def webhook_matches(
     return False
 
 
+def stable_id_matches(unique_id: str | None, vendor_id: str) -> bool:
+    """Match a complete registry id suffix, never a partial overlapping id."""
+    unique_id = (unique_id or "").lower()
+    vendor_id = vendor_id.lower()
+    return unique_id == vendor_id or any(
+        unique_id.endswith(separator + vendor_id) for separator in ("_", "-")
+    )
+
+
 def match_schedule_entity(
     schedule_name: str,
     linked_entities: LinkedRachioEntities,
@@ -720,27 +737,6 @@ def match_schedule_entity(
     schedule_words = normalize_words(schedule_name)
     candidates: list[tuple[int, int, ScheduleEntityRef]] = []
     for entity in linked_entities.schedule_entities:
-        entity_words = normalize_words(entity.label)
-        overlap = len(schedule_words & entity_words)
-        exactish = int(schedule_words == entity_words and bool(schedule_words))
-        candidates.append((exactish, overlap, entity))
-    if not candidates:
-        return None
-    candidates.sort(key=lambda item: (item[0], item[1]), reverse=True)
-    best = candidates[0]
-    if best[0] == 0 and best[1] == 0:
-        return None
-    return best[2]
-
-
-def match_zone_entity(
-    schedule_name: str,
-    linked_entities: LinkedRachioEntities,
-) -> ZoneEntityRef | None:
-    """Match a Rachio API schedule to a discovered HA zone entity."""
-    schedule_words = normalize_words(schedule_name)
-    candidates: list[tuple[int, int, ZoneEntityRef]] = []
-    for entity in linked_entities.zone_entities:
         entity_words = normalize_words(entity.label)
         overlap = len(schedule_words & entity_words)
         exactish = int(schedule_words == entity_words and bool(schedule_words))
@@ -822,42 +818,9 @@ def match_zone_entity_by_controller_zone(
     if not controller_zone_id:
         return None
     needle = controller_zone_id.lower()
-    for entity in linked_entities.zone_entities:
-        unique_id = (entity.unique_id or "").lower()
-        if needle and needle in unique_id:
-            return entity
-
-    zone = _controller_enabled_zone_map(controller).get(controller_zone_id)
-    zone_name = str(zone.get("name", "")) if zone else ""
-    if zone_name:
-        return match_zone_entity(zone_name, linked_entities)
-    return None
-
-
-def match_controller_zone(
-    schedule_name: str,
-    controller: dict[str, object],
-) -> str | None:
-    """Match a schedule name to a controller zone id by name overlap."""
-    schedule_words = normalize_words(schedule_name)
-    candidates: list[tuple[int, int, str]] = []
-    for zone in controller.get("zones", []):
-        if not zone.get("enabled", True):
-            continue
-        zone_name = str(zone.get("name", ""))
-        zone_words = normalize_words(zone_name)
-        overlap = len(schedule_words & zone_words)
-        exactish = int(schedule_words == zone_words and bool(schedule_words))
-        zone_id = str(zone.get("id", ""))
-        if zone_id:
-            candidates.append((exactish, overlap, zone_id))
-    if not candidates:
-        return None
-    candidates.sort(key=lambda item: (item[0], item[1]), reverse=True)
-    best = candidates[0]
-    if best[0] == 0 and best[1] == 0:
-        return None
-    return best[2]
+    matches = [entity for entity in linked_entities.zone_entities
+        if stable_id_matches(entity.unique_id, needle)]
+    return matches[0] if len(matches) == 1 else None
 
 
 def resolve_moisture_entity(
@@ -2074,138 +2037,6 @@ def schedule_rule_watering_days(rule: dict[str, object]) -> tuple[str, ...]:
     return tuple(RACHIO_DAY_CHIPS[day] for day in sorted(days))
 
 
-def _rule_start_time(rule: dict[str, object]) -> tuple[int, int] | None:
-    """Return the rule start hour/minute when the API exposes one."""
-    try:
-        hour = int(rule.get("startHour", 0))
-        minute = int(rule.get("startMinute", 0))
-    except (TypeError, ValueError):
-        return None
-    if not 0 <= hour <= 23 or not 0 <= minute <= 59:
-        return None
-    return hour, minute
-
-
-def _controller_timezone(controller: dict[str, object]):
-    """Return the controller timezone, falling back to Home Assistant local time."""
-    timezone_name = str(controller.get("timeZone") or "")
-    if timezone_name:
-        try:
-            return ZoneInfo(timezone_name)
-        except ZoneInfoNotFoundError:
-            return None
-    return None
-
-
-def _localize_current(
-    current: datetime,
-    tzinfo,
-) -> datetime:
-    """Return current time in the controller timezone."""
-    if tzinfo is None:
-        return current
-    if current.tzinfo is None:
-        return current.replace(tzinfo=tzinfo)
-    return current.astimezone(tzinfo)
-
-
-def _rule_start_datetime(
-    rule: dict[str, object],
-    controller: dict[str, object],
-    tzinfo,
-) -> datetime | None:
-    """Return the local start datetime for interval schedules."""
-    start_time = _rule_start_time(rule)
-    if start_time is None:
-        return None
-    hour, minute = start_time
-    start_date = rule.get("startDate")
-    try:
-        if start_date is not None:
-            start = datetime.fromtimestamp(int(start_date) / 1000, tz=tzinfo or timezone.utc)
-            if tzinfo is not None:
-                start = start.astimezone(tzinfo)
-            return start.replace(hour=hour, minute=minute, second=0, microsecond=0)
-    except (TypeError, ValueError, OSError):
-        pass
-
-    try:
-        year = int(rule.get("startYear", dt_util.now().year))
-        month = int(rule.get("startMonth", 1))
-        day = int(rule.get("startDay", 1))
-        return datetime(
-            year,
-            month,
-            day,
-            hour,
-            minute,
-            tzinfo=tzinfo,
-        )
-    except (TypeError, ValueError):
-        return None
-
-
-def schedule_rule_next_run(
-    rule: dict[str, object],
-    controller: dict[str, object],
-    *,
-    current: datetime | None = None,
-) -> str | None:
-    """Return the next run timestamp from Rachio rule metadata when possible."""
-    start_time = _rule_start_time(rule)
-    if start_time is None:
-        summary = str(rule.get("summary", "")).strip()
-        return summary or None
-
-    tzinfo = _controller_timezone(controller)
-    now = _localize_current(current or dt_util.now(), tzinfo)
-    hour, minute = start_time
-    weekdays: list[int] = []
-    interval_days: int | None = None
-    for job_type in _schedule_job_types(rule):
-        day_match = re.fullmatch(r"DAY_OF_WEEK_([1-7])", job_type)
-        if day_match:
-            weekdays.append(int(day_match.group(1)) - 1)
-            continue
-        interval_match = re.fullmatch(r"INTERVAL_([0-9]+)", job_type)
-        if interval_match:
-            interval_days = max(1, int(interval_match.group(1)))
-
-    if weekdays:
-        candidates = []
-        for weekday in sorted(set(weekdays)):
-            days_ahead = (weekday - now.weekday()) % 7
-            candidate = (now + timedelta(days=days_ahead)).replace(
-                hour=hour,
-                minute=minute,
-                second=0,
-                microsecond=0,
-            )
-            if candidate <= now:
-                candidate += timedelta(days=7)
-            candidates.append(candidate)
-        return min(candidates).isoformat() if candidates else None
-
-    if interval_days is not None:
-        start = _rule_start_datetime(rule, controller, tzinfo)
-        if start is None:
-            candidate = now.replace(hour=hour, minute=minute, second=0, microsecond=0)
-            if candidate <= now:
-                candidate += timedelta(days=interval_days)
-            return candidate.isoformat()
-        candidate = start
-        if candidate <= now:
-            elapsed_days = max(0, (now.date() - candidate.date()).days)
-            intervals_elapsed = elapsed_days // interval_days
-            candidate = candidate + timedelta(days=intervals_elapsed * interval_days)
-            while candidate <= now:
-                candidate += timedelta(days=interval_days)
-        return candidate.isoformat()
-
-    summary = str(rule.get("summary", "")).strip()
-    return summary or None
-
-
 def _rain_skip_state(schedule: ScheduleSnapshot) -> str:
     """Return a compact rain-skip state for zone cards."""
     if not schedule.last_skip_at:
@@ -2262,12 +2093,217 @@ def _cached_imported_zone_image_path(hass: HomeAssistant, zone_id: str | None) -
     return None
 
 
+def controller_schedule_rules(
+    controller: dict[str, object],
+) -> tuple[dict[str, object], ...]:
+    """Discover fixed and Flex schedules once by vendor id."""
+    rules = {}
+    for key in ("scheduleRules", "flexScheduleRules"):
+        for rule in controller.get(key, []) or []:
+            if isinstance(rule, dict) and rule.get("id"):
+                rules.setdefault(str(rule["id"]), rule)
+    return tuple(rules.values())
+
+
+def build_physical_zones(controller, linked_entities) -> tuple[dict[str, object], ...]:
+    """Keep physical zone inventory independent from schedule policy targets."""
+    zones = []
+    rules = controller_schedule_rules(controller)
+    for zone_id, zone in _controller_enabled_zone_map(controller).items():
+        entity = match_zone_entity_by_controller_zone(
+            zone_id, controller, linked_entities
+        )
+        memberships = []
+        for rule in rules:
+            if not rule.get("enabled") or zone_id not in _extract_rule_zone_ids(rule):
+                continue
+            durations = [
+                positive_seconds(item.get("duration"))
+                for item in rule.get("zones", [])
+                if isinstance(item, dict) and str(item.get("zoneId")) == zone_id
+            ]
+            durations = [duration for duration in durations if duration is not None]
+            memberships.append(
+                {
+                    "schedule_id": str(rule["id"]),
+                    "duration_seconds": sum(durations) if durations else None,
+                }
+            )
+        zones.append(
+            {
+                "zone_id": zone_id,
+                "zone_name": str(zone.get("name") or zone_id),
+                "zone_entity_id": entity.entity_id if entity else None,
+                "schedules": memberships,
+            }
+        )
+    return tuple(zones)
+
+
+def build_physical_zone_overview(
+    hass, schedules, flow_alerts, physical_zones, upcoming_runs, upcoming_runs_status
+):
+    """Project each enabled physical zone once, with its own runtime and forecast."""
+    by_id = {schedule.rule_id: schedule for schedule in schedules}
+    items = []
+    matched_alerts = set()
+    for zone in physical_zones:
+        zone_id = zone["zone_id"]
+        memberships = zone["schedules"]
+        linked = [
+            by_id[item["schedule_id"]]
+            for item in memberships
+            if item["schedule_id"] in by_id
+        ]
+        zone_runs = [
+            run
+            for run in upcoming_runs
+            if not run["skipped"]
+            and any(item["zone_id"] == zone_id for item in run["zones"])
+        ]
+        next_run = zone_runs[0] if zone_runs else None
+        selected = next(
+            (
+                item
+                for item in linked
+                if next_run and item.rule_id == next_run["schedule_id"]
+            ),
+            linked[0] if linked else None,
+        )
+        duration = None
+        if next_run:
+            duration = next(
+                item["duration_seconds"]
+                for item in next_run["zones"]
+                if item["zone_id"] == zone_id
+            )
+        elif len(memberships) == 1:
+            duration = memberships[0]["duration_seconds"]
+        minutes = max(1, round(duration / 60)) if duration else None
+        if selected:
+            projection = replace(
+                selected,
+                name=zone["zone_name"],
+                controller_zone_id=zone_id,
+                zone_entity_id=zone["zone_entity_id"],
+                runtime_minutes=minutes or 3,
+            )
+            if selected.controller_zone_id != zone_id:
+                # A schedule-level moisture mapping cannot be assigned to one
+                # member of a multi-zone schedule by inference.
+                projection = replace(
+                    projection,
+                    moisture_entity_id=None,
+                    moisture_value=None,
+                    moisture_band="unmapped",
+                    moisture_observed_value=None,
+                    moisture_observed_at=None,
+                    moisture_age_label="unknown",
+                    moisture_freshness="expired",
+                    moisture_confidence="none",
+                    moisture_quality_note="Schedule mapping is not an individual-zone measurement.",
+                    moisture_quality_flags=(),
+                    moisture_source_state=None,
+                    moisture_source_last_updated=None,
+                    moisture_source_age_label="unknown",
+                    moisture_sampling_interval_seconds=None,
+                    imported_image_path=None,
+                    photo_import_status="disabled",
+                    rachio_image_available=False,
+                )
+        else:
+            projection = ScheduleSnapshot(
+                rule_id="",
+                name=zone["zone_name"],
+                status="monitoring",
+                reason="No enabled schedule references this zone.",
+                catch_up_candidate="not_applicable",
+                policy_mode="observe_only",
+                policy_basis="No schedule policy.",
+                schedule_entity_id=None,
+                zone_entity_id=zone["zone_entity_id"],
+                controller_zone_id=zone_id,
+                moisture_entity_id=None,
+                moisture_value=None,
+                moisture_band="unmapped",
+                moisture_status="No schedule mapping.",
+                moisture_write_back_ready="zone_unresolved",
+                recommended_action="none",
+                review_state="none",
+                runtime_minutes=minutes or 3,
+                last_run_at=None,
+                last_skip_at=None,
+                summary="No enabled schedule references this zone.",
+                threshold_mm=None,
+                observed_mm=None,
+            )
+        row = dict(build_zone_overview_items(hass, (projection,), flow_alerts)[0])
+        alert = _matching_flow_alert(projection, flow_alerts)
+        if alert:
+            matched_alerts.add(alert.rule_id)
+        row.update(
+            {
+                "controller_zone_id": zone_id,
+                "schedule_name": selected.name if selected else "",
+                "schedule_names": [item.name for item in linked],
+                "schedule_ids": [item.rule_id for item in linked],
+                "schedule_policies": [
+                    {
+                        "schedule_id": item.rule_id,
+                        "schedule_name": item.name,
+                        "policy_mode": item.policy_mode,
+                        "status": item.status,
+                        "last_run_at": item.last_run_at,
+                        "last_skip_at": item.last_skip_at,
+                    }
+                    for item in linked
+                ],
+                "quick_run_minutes": minutes,
+                "runtime_minutes": minutes,
+                "next_run": next_run["start"] if next_run else "not_reported",
+                "next_run_end": next_run["end"] if next_run else None,
+                "next_run_source": "rachio_upcoming_runs",
+                "upcoming_runs_status": upcoming_runs_status,
+                "next_run_cycle_soak": next_run["cycle_soak"] if next_run else None,
+                "next_run_watering_seconds": duration if next_run else None,
+                "next_run_elapsed_seconds": next_run["elapsed_seconds"]
+                if next_run
+                else None,
+                "predicted_skips": [
+                    run
+                    for run in upcoming_runs
+                    if run["skipped"]
+                    and run["schedule_id"] in {item.rule_id for item in linked}
+                ],
+            }
+        )
+        items.append(row)
+    items.extend(
+        build_zone_overview_items(
+            hass,
+            (),
+            tuple(
+                alert for alert in flow_alerts if alert.rule_id not in matched_alerts
+            ),
+        )
+    )
+    return tuple(items)
+
+
 def build_zone_overview_items(
     hass: HomeAssistant,
     schedules: tuple[ScheduleSnapshot, ...],
     flow_alerts: tuple[FlowAlertSnapshot, ...] = (),
+    *,
+    physical_zones: tuple[dict[str, object], ...] | None = None,
+    upcoming_runs: tuple[dict[str, object], ...] = (),
+    upcoming_runs_status: str = "unavailable",
 ) -> tuple[dict[str, object], ...]:
-    """Build compact, visual zone rows for dashboard use."""
+    """Build physical zone rows when fresh controller evidence is available."""
+    if physical_zones is not None:
+        return build_physical_zone_overview(
+            hass, schedules, flow_alerts, physical_zones, upcoming_runs, upcoming_runs_status
+        )
     items: list[dict[str, object]] = []
     matched_flow_alert_rule_ids: set[str] = set()
     for index, schedule in enumerate(schedules, start=1):
@@ -3105,6 +3141,17 @@ def build_rachio_evidence(
             "reason",
             weather_outlook["reason"],
         )
+    upcoming_runs = ()
+    upcoming_runs_status = "unavailable"
+    upcoming_getter = getattr(client, "list_upcoming_runs", None)
+    if callable(upcoming_getter):
+        try:
+            upcoming_runs = normalize_upcoming_runs(upcoming_getter(controller_id))
+            upcoming_runs_status = "available"
+        except (RachioClientError, ValueError):
+            # A failed optional report must not break policy/evidence reconciliation,
+            # or be shown as a successful empty calendar.
+            upcoming_runs_status = "unavailable"
     now = dt_util.now()
     events = client.list_device_events(
         controller_id,
@@ -3165,23 +3212,20 @@ def build_rachio_evidence(
     )
 
     schedule_snapshots: list[ScheduleSnapshot] = []
-    for rule in controller.get("scheduleRules", []):
+    for rule in controller_schedule_rules(controller):
         if not rule.get("enabled"):
             continue
         rule_id = str(rule["id"])
         name = str(rule.get("name", rule_id))
-        matched_schedule_entity = match_schedule_entity(name, linked_entities)
-        controller_zone_id = (
-            match_controller_zone_from_rule(rule, controller)
-            or match_controller_zone(name, controller)
-        )
-        matched_zone_entity = (
-            match_zone_entity_by_controller_zone(
-                controller_zone_id,
-                controller,
-                linked_entities,
-            )
-            or match_zone_entity(name, linked_entities)
+        matched_schedule_entity = next((entity for entity in linked_entities.schedule_entities
+            if stable_id_matches(entity.unique_id, rule_id)), None)
+        if matched_schedule_entity is None and not any(
+            entity.unique_id for entity in linked_entities.schedule_entities
+        ):
+            matched_schedule_entity = match_schedule_entity(name, linked_entities)
+        controller_zone_id = match_controller_zone_from_rule(rule, controller)
+        matched_zone_entity = match_zone_entity_by_controller_zone(
+            controller_zone_id, controller, linked_entities
         )
         imported_image_path = None
         photo_import_enabled = bool(import_zone_photos)
@@ -3291,7 +3335,8 @@ def build_rachio_evidence(
                 rachio_image_available=rachio_image_available,
                 photo_import_status=photo_import_status,
                 photo_import_reason=photo_import_reason,
-                next_run_at=schedule_rule_next_run(rule, controller),
+                next_run_at=next((run["start"] for run in upcoming_runs
+                    if run["schedule_id"] == rule_id and not run["skipped"]), None),
                 watering_days=schedule_rule_watering_days(rule),
             )
         )
@@ -3323,6 +3368,10 @@ def build_rachio_evidence(
         schedule_snapshots=tuple(schedule_snapshots),
         weather_source_probe=weather_source_probe,
         weather_outlook=weather_outlook,
+        physical_zones=build_physical_zones(controller, linked_entities),
+        upcoming_runs=upcoming_runs,
+        upcoming_runs_status=upcoming_runs_status,
+        upcoming_runs_updated_at=dt_util.now().isoformat() if upcoming_runs_status == "available" else None,
     )
 
 
@@ -3338,6 +3387,7 @@ class RachioSupervisorCoordinator(DataUpdateCoordinator[SupervisorSnapshot]):
         )
         self.entry = entry
         self._cached_evidence: RachioEvidenceSnapshot | None = None
+        self._last_upcoming_attempt: datetime | None = None
         self._last_moisture_write_status = "none"
         self._last_moisture_write_at: str | None = None
         self._last_moisture_write_schedule: str | None = None
@@ -3557,6 +3607,34 @@ class RachioSupervisorCoordinator(DataUpdateCoordinator[SupervisorSnapshot]):
         ):
             return last_reconcile.date() < current.date()
         return False
+
+    async def _async_refresh_upcoming_runs(
+        self, client: RachioClient, current: datetime
+    ) -> None:
+        """Refresh only the optional forecast on a shared 15-minute budget."""
+        self._last_upcoming_attempt = current
+        evidence = self._cached_evidence
+        if evidence is None:
+            return
+        try:
+            payload = await self.hass.async_add_executor_job(
+                client.list_upcoming_runs, evidence.controller_id
+            )
+            evidence.upcoming_runs = normalize_upcoming_runs(payload)
+            evidence.upcoming_runs_status = "available"
+            evidence.upcoming_runs_updated_at = current.isoformat()
+        except (RachioClientError, ValueError):
+            evidence.upcoming_runs = ()
+            evidence.upcoming_runs_status = "unavailable"
+        for schedule in evidence.schedule_snapshots:
+            schedule.next_run_at = next(
+                (
+                    run["start"]
+                    for run in evidence.upcoming_runs
+                    if run["schedule_id"] == schedule.rule_id and not run["skipped"]
+                ),
+                None,
+            )
 
     def force_next_reconciliation(self) -> None:
         """Make the next refresh rebuild Rachio evidence instead of using cache."""
@@ -3933,6 +4011,7 @@ class RachioSupervisorCoordinator(DataUpdateCoordinator[SupervisorSnapshot]):
                 self._supervisor_reason = f"Rachio API evidence fetch failed: {err}"
             else:
                 self._cached_evidence = evidence
+                self._last_upcoming_attempt = current
                 health, self._supervisor_reason, webhook_health = evaluate_cached_evidence_health(
                     evidence=evidence,
                     current=current,
@@ -3950,6 +4029,18 @@ class RachioSupervisorCoordinator(DataUpdateCoordinator[SupervisorSnapshot]):
                     )
                     self._last_health_notification = health
                 notes.append(self._supervisor_reason)
+        if (api_key and linked_entry and linked_entry.state == ConfigEntryState.LOADED
+                and self._cached_evidence is not None
+                and (self._last_upcoming_attempt is None
+                     or current - self._last_upcoming_attempt >= timedelta(minutes=15))):
+            await self._async_refresh_upcoming_runs(RachioClient(str(api_key)), current)
+        if self._cached_evidence is not None and (
+            not api_key or not linked_entry or linked_entry.state != ConfigEntryState.LOADED
+        ):
+            self._cached_evidence.upcoming_runs_status = "unavailable"
+            self._cached_evidence.upcoming_runs = ()
+            for schedule in self._cached_evidence.schedule_snapshots:
+                schedule.next_run_at = None
         evidence = self._cached_evidence
         if evidence is not None:
             if linked_entry and linked_entry.state == ConfigEntryState.LOADED:
@@ -4250,7 +4341,10 @@ class RachioSupervisorCoordinator(DataUpdateCoordinator[SupervisorSnapshot]):
         data_completeness = "complete" if not missing_inputs else "warnings"
         moisture_review_items = build_moisture_review_items(schedule_snapshots)
         zone_overview_items = build_zone_overview_items(
-            self.hass, schedule_snapshots, flow_alert_snapshots
+            self.hass, schedule_snapshots, flow_alert_snapshots,
+            physical_zones=evidence.physical_zones if evidence else (),
+            upcoming_runs=evidence.upcoming_runs if evidence else (),
+            upcoming_runs_status=evidence.upcoming_runs_status if evidence else "unavailable",
         )
         rain_source_label = (
             rain_resolution.source_id
@@ -4343,6 +4437,9 @@ class RachioSupervisorCoordinator(DataUpdateCoordinator[SupervisorSnapshot]):
                 "entity_count": len(linked_entities.all_entities),
             },
             schedule_snapshots=schedule_snapshots,
+            upcoming_runs=evidence.upcoming_runs if evidence else (),
+            upcoming_runs_status=evidence.upcoming_runs_status if evidence else "unavailable",
+            upcoming_runs_updated_at=evidence.upcoming_runs_updated_at if evidence else None,
             rain_source_mode=rain_source_mode,
             rain_source_label=rain_source_label,
             rain_source_observed_at=rain_resolution.observed_at,

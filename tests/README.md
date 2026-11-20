@@ -75,3 +75,19 @@ Use this gate for:
 The public screenshots under `docs/assets/screenshots/` are sanitized product
 captures. Do not replace them with live Home Assistant screenshots that include
 private network addresses, account UI, property names, or raw house data.
+
+## Schedule, zone and upcoming-run checks
+
+`test_supervisor_logic` includes synthetic fixed/Flex, exact physical-zone and
+upcoming-run/skip/soak/cache/calendar regression tests.
+`test_reporting_homeassistant` is a separate offline suite against real Home
+Assistant 2026.10.4, installed from `requirements-homeassistant.txt` on Python
+3.14. Run it in its own process, never with the stub suite in one interpreter:
+
+```sh
+uv run --no-project --python 3.14 --with-requirements tests/requirements-homeassistant.txt \
+  python -m unittest -v tests.test_reporting_homeassistant
+```
+
+CI runs the deterministic suite; the real-HA suite is an explicit local gate.
+No test contacts Rachio or waters a device.
