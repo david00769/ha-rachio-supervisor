@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.2.13 - 2026-11-21
 
 - Added Flex schedule discovery (`flexScheduleRules`) alongside fixed schedules.
 - `Zone overview` now has one row per enabled physical zone, with every schedule
