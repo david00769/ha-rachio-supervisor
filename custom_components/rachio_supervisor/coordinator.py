@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, replace
+from functools import partial
 from datetime import datetime, timedelta, timezone
 import json
 from pathlib import Path
@@ -18,7 +19,7 @@ from homeassistant.core import HomeAssistant
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator
 from homeassistant.util import dt as dt_util
 
-from .reporting import normalize_upcoming_runs, positive_seconds
+from .reporting import normalize_upcoming_runs, positive_seconds, retain_last_good_runs
 
 from .const import (
     CONF_ALLOW_MOISTURE_WRITE_BACK,
@@ -34,6 +35,7 @@ from .const import (
     CONF_OBSERVE_FIRST,
     CONF_RACHIO_FORECAST_UNITS,
     DEFAULT_RACHIO_FORECAST_UNITS,
+    FORECAST_UNITS_AUTO,
     FORECAST_UNITS_METRIC,
     FORECAST_UNITS_US,
     CONF_RACHIO_CONFIG_ENTRY_ID,
@@ -1217,6 +1219,31 @@ def _normalise_weather_underground_station_id(station_id: object) -> str:
     return str(station_id or "").strip().upper()
 
 
+def _weather_underground_http_error_reason(exc: urllib.error.HTTPError) -> str:
+    """Name the HTTP status and Weather Underground's own message for it.
+
+    A 401 carries the cause in its body ("API key is throttled", "Invalid
+    apiKey"), and the status alone cannot tell those apart.
+    """
+    try:
+        detail = exc.read(500).decode("utf-8", "replace")
+    except Exception:  # noqa: BLE001 - the body is diagnostic only
+        detail = ""
+    try:
+        # The documented error body: {"errors": [{"error": {"message": ...}}]}
+        detail = json.loads(detail)["errors"][0]["error"]["message"]
+    except (ValueError, KeyError, IndexError, TypeError):
+        pass
+    detail = " ".join(str(detail).split())[:120]
+    reason = f"Weather Underground station fetch failed with HTTP {exc.code}"
+    if detail:
+        reason += f": {detail}"
+    reason += "."
+    if exc.code == 401:
+        reason += " Check this API key in your Weather Underground account."
+    return reason
+
+
 def resolve_weather_underground_pws_actuals(
     station_id: object,
     api_key: object,
@@ -1284,7 +1311,7 @@ def resolve_weather_underground_pws_actuals(
             unit="mm",
             status="provider_error",
             missing_input="rain_actuals_weather_station_unavailable",
-            reason=f"Weather Underground station fetch failed with HTTP {exc.code}.",
+            reason=_weather_underground_http_error_reason(exc),
             window="unknown",
             confidence="none",
             source_type=RAIN_SOURCE_MODE_WEATHER_UNDERGROUND,
@@ -2617,7 +2644,10 @@ def _format_weather_amount(value: object, suffix: str) -> str | None:
 
 
 def _forecast_record(
-    payload: object, label: str, units: str = "METRIC"
+    payload: object,
+    label: str,
+    units: str = "METRIC",
+    display_units: str = "METRIC",
 ) -> dict[str, object] | None:
     """Return a compact weather forecast record from one Rachio payload node."""
     if not isinstance(payload, dict):
@@ -2651,10 +2681,22 @@ def _forecast_record(
         if number is None:
             return None
         if units == "US":
-            if temperature:
-                return round((number - 32) * 5 / 9, 1)
-            return round(number * 25.4, 2)
-        return number
+            number = (number - 32) * 5 / 9 if temperature else number * 25.4
+        return round(number, 1) if temperature else round(number, 2)
+
+    def shown_temperature(value):
+        if value is None:
+            return None
+        if display_units == "US":
+            return _format_weather_amount(round(value * 9 / 5 + 32, 1), "F")
+        return _format_weather_amount(value, "C")
+
+    def shown_amount(value, metric_suffix, us_suffix):
+        if value is None:
+            return None
+        if display_units == "US":
+            return _format_weather_amount(round(value / 25.4, 2), us_suffix)
+        return _format_weather_amount(value, metric_suffix)
 
     temperature = metric(temperature, temperature=True)
     high = metric(high, temperature=True)
@@ -2664,22 +2706,22 @@ def _forecast_record(
     parts: list[str] = []
     if summary:
         parts.append(str(summary))
-    temp_label = _format_weather_amount(temperature, "C")
+    temp_label = shown_temperature(temperature)
     if temp_label:
         parts.append(temp_label)
     elif high is not None or low is not None:
-        high_label = _format_weather_amount(high, "C")
-        low_label = _format_weather_amount(low, "C")
+        high_label = shown_temperature(high)
+        low_label = shown_temperature(low)
         if high_label and low_label:
             parts.append(f"{low_label}-{high_label}")
         elif high_label:
             parts.append(f"high {high_label}")
         elif low_label:
             parts.append(f"low {low_label}")
-    precip_label = _format_weather_amount(precip, " mm")
+    precip_label = shown_amount(precip, " mm", " in")
     if precip_label:
         parts.append(precip_label)
-    intensity_label = _format_weather_amount(intensity, " mm/h")
+    intensity_label = shown_amount(intensity, " mm/h", " in/h")
     if intensity_label:
         parts.append(intensity_label)
     probability_label = _format_weather_amount(
@@ -2741,13 +2783,17 @@ def _select_forecast_days(
     def is_dated(node: object) -> bool:
         return isinstance(day_time(node), (int, float))
 
-    if not all(is_dated(node) for node in forecast):
+    dated_forecast = [node for node in forecast if is_dated(node)]
+    if forecast and not dated_forecast:
         labelled = [
             ("today" if index == 0 else "next", item)
             for index, item in enumerate(forecast[:2])
         ]
         return current, labelled, False
 
+    # Undated nodes cannot be placed on a day, so they are left out rather than
+    # turning off date selection for the days that are dated.
+    forecast = dated_forecast
     timestamp = (now or dt_util.now()).timestamp()
     pool = [*forecast, current] if is_dated(current) else forecast
     days = sorted(pool, key=day_time)
@@ -2762,6 +2808,9 @@ def _select_forecast_days(
         labelled.append(("today", today))
     if following is not None:
         labelled.append(("next", following))
+    if not isinstance(current, dict):
+        # A forecast-only payload still knows today; report it as now.
+        return today, labelled, True
     if not is_dated(current) or (today is not None and day_time(current) == day_time(today)):
         return current, labelled, True
     return today, labelled, True
@@ -2771,6 +2820,7 @@ def build_rachio_weather_outlook(
     forecast_payload: dict[str, object] | None,
     *,
     units: str = "METRIC",
+    display_units: str = "METRIC",
     now: datetime | None = None,
 ) -> dict[str, object]:
     """Build a read-only weather outlook without treating forecasts as actual rain."""
@@ -2789,10 +2839,10 @@ def build_rachio_weather_outlook(
         }
 
     current_node, days, days_are_dated = _select_forecast_days(forecast_payload, now)
-    current = _forecast_record(current_node, "current", units)
+    current = _forecast_record(current_node, "current", units, display_units)
     forecast_items = []
     for label, item in days:
-        record = _forecast_record(item, label, units)
+        record = _forecast_record(item, label, units, display_units)
         if record:
             forecast_items.append(record)
     next_record = next((item for item in forecast_items if item["label"] == "next"), None)
@@ -3102,6 +3152,7 @@ def build_rachio_evidence(
     import_zone_photos: bool = False,
     config_path=None,
     forecast_units: str = "METRIC",
+    display_units: str = "METRIC",
 ) -> RachioEvidenceSnapshot:
     """Build a site-level evidence snapshot from the public Rachio API."""
     devices = client.list_person_devices()
@@ -3135,7 +3186,9 @@ def build_rachio_evidence(
         weather_source_probe["reason"] = (
             "Rachio forecast/source probe unavailable in the current API adapter."
         )
-    weather_outlook = build_rachio_weather_outlook(forecast_payload, units=forecast_units)
+    weather_outlook = build_rachio_weather_outlook(
+        forecast_payload, units=forecast_units, display_units=display_units
+    )
     if weather_source_probe.get("status") == "forecast_unavailable":
         weather_outlook["reason"] = weather_source_probe.get(
             "reason",
@@ -3373,6 +3426,45 @@ def build_rachio_evidence(
         upcoming_runs_status=upcoming_runs_status,
         upcoming_runs_updated_at=dt_util.now().isoformat() if upcoming_runs_status == "available" else None,
     )
+
+
+def _keep_last_good_upcoming_runs(
+    target: RachioEvidenceSnapshot,
+    previous: RachioEvidenceSnapshot,
+    current: datetime,
+) -> None:
+    """After a failed forecast request, keep the last good one while it is recent.
+
+    The kept runs are marked ``stale`` and keep their fetch time, so one
+    transient Rachio error does not blank every next run and the calendar.
+    """
+    retained = None
+    if previous.upcoming_runs_status in {"available", "stale"}:
+        retained = retain_last_good_runs(
+            previous.upcoming_runs, previous.upcoming_runs_updated_at, current
+        )
+    if not retained:
+        # Too old, or every kept run has ended: an empty calendar would look
+        # like a quiet fortnight rather than a failed request.
+        target.upcoming_runs = ()
+        target.upcoming_runs_status = "unavailable"
+        return
+    target.upcoming_runs = retained
+    target.upcoming_runs_status = "stale"
+    target.upcoming_runs_updated_at = previous.upcoming_runs_updated_at
+
+
+def _apply_schedule_next_runs(evidence: RachioEvidenceSnapshot) -> None:
+    """Set each schedule's next run from the forecast the evidence now holds."""
+    for schedule in evidence.schedule_snapshots:
+        schedule.next_run_at = next(
+            (
+                run["start"]
+                for run in evidence.upcoming_runs
+                if run["schedule_id"] == schedule.rule_id and not run["skipped"]
+            ),
+            None,
+        )
 
 
 class RachioSupervisorCoordinator(DataUpdateCoordinator[SupervisorSnapshot]):
@@ -3624,17 +3716,8 @@ class RachioSupervisorCoordinator(DataUpdateCoordinator[SupervisorSnapshot]):
             evidence.upcoming_runs_status = "available"
             evidence.upcoming_runs_updated_at = current.isoformat()
         except (RachioClientError, ValueError):
-            evidence.upcoming_runs = ()
-            evidence.upcoming_runs_status = "unavailable"
-        for schedule in evidence.schedule_snapshots:
-            schedule.next_run_at = next(
-                (
-                    run["start"]
-                    for run in evidence.upcoming_runs
-                    if run["schedule_id"] == schedule.rule_id and not run["skipped"]
-                ),
-                None,
-            )
+            _keep_last_good_upcoming_runs(evidence, evidence, current)
+        _apply_schedule_next_runs(evidence)
 
     def force_next_reconciliation(self) -> None:
         """Make the next refresh rebuild Rachio evidence instead of using cache."""
@@ -3816,6 +3899,12 @@ class RachioSupervisorCoordinator(DataUpdateCoordinator[SupervisorSnapshot]):
             self.hass.config.units.temperature_unit,
         )
 
+    def _display_units(self) -> str:
+        """Return the unit system weather summaries are written in for people."""
+        return resolve_forecast_units(
+            FORECAST_UNITS_AUTO, self.hass.config.units.temperature_unit
+        )
+
     async def _async_update_data(self) -> SupervisorSnapshot:
         """Return the current site-level supervision snapshot."""
         current = dt_util.now()
@@ -3984,7 +4073,11 @@ class RachioSupervisorCoordinator(DataUpdateCoordinator[SupervisorSnapshot]):
         ):
             try:
                 evidence = await self.hass.async_add_executor_job(
-                    build_rachio_evidence,
+                    partial(
+                        build_rachio_evidence,
+                        forecast_units=self._forecast_units(data),
+                        display_units=self._display_units(),
+                    ),
                     RachioClient(str(api_key)),
                     linked_entities,
                     len(linked_entities.zone_switches),
@@ -4002,7 +4095,6 @@ class RachioSupervisorCoordinator(DataUpdateCoordinator[SupervisorSnapshot]):
                         )
                     ),
                     self.hass.config.path,
-                    self._forecast_units(data),
                 )
             except RachioClientError as err:
                 notes.append(f"Rachio API evidence fetch failed: {err}")
@@ -4010,6 +4102,13 @@ class RachioSupervisorCoordinator(DataUpdateCoordinator[SupervisorSnapshot]):
                     health = "degraded"
                 self._supervisor_reason = f"Rachio API evidence fetch failed: {err}"
             else:
+                previous_evidence = self._cached_evidence
+                if (
+                    evidence.upcoming_runs_status == "unavailable"
+                    and previous_evidence is not None
+                ):
+                    _keep_last_good_upcoming_runs(evidence, previous_evidence, current)
+                    _apply_schedule_next_runs(evidence)
                 self._cached_evidence = evidence
                 self._last_upcoming_attempt = current
                 health, self._supervisor_reason, webhook_health = evaluate_cached_evidence_health(

@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import math
-from datetime import datetime
+from datetime import datetime, timedelta
 
 
 class InvalidUpcomingRuns(ValueError):
@@ -30,6 +30,26 @@ def positive_seconds(value: object) -> float | None:
     except (TypeError, ValueError):
         return None
     return result if math.isfinite(result) and result > 0 else None
+
+
+STALE_FORECAST_LIMIT = timedelta(hours=24)
+
+
+def retain_last_good_runs(
+    runs: tuple[dict[str, object], ...],
+    updated_at: object,
+    now: datetime,
+) -> tuple[dict[str, object], ...] | None:
+    """Return the runs of a last good forecast that have not ended yet.
+
+    None means the forecast is too old, or its fetch time unknown, to show.
+    """
+    fetched = run_datetime(updated_at)
+    if fetched is None or now - fetched > STALE_FORECAST_LIMIT:
+        return None
+    return tuple(
+        run for run in runs if (end := run_datetime(run.get("end"))) is not None and end > now
+    )
 
 
 def normalize_upcoming_runs(payload: object) -> tuple[dict[str, object], ...]:

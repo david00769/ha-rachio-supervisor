@@ -37,7 +37,8 @@ still keeping the default install observe-first:
   to Home Assistant entities by their registry ids, not by name
 - a read-only `Upcoming runs` calendar entity shows Rachio's 14-day forecast,
   with predicted skips labelled; these are predictions, not watering evidence,
-  and the forecast refreshes at most every 15 minutes
+  and the forecast refreshes at most every 15 minutes; if a refresh fails, the
+  last good forecast stays up to 24 hours, marked `stale`, with its fetch time
 - the integration serves a lightweight Lovelace custom card at
   `/rachio_supervisor/rachio-supervisor-zone-grid-card.js`; this is the
   recommended zone-first dashboard surface and renders zone photos, compact

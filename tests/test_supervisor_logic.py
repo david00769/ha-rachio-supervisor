@@ -9,9 +9,11 @@ from __future__ import annotations
 import asyncio
 import json
 from dataclasses import dataclass, replace
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from zoneinfo import ZoneInfo
 import importlib
+import io
+import urllib.error
 from pathlib import Path
 import sys
 import tempfile
@@ -4771,7 +4773,7 @@ class ComprehensiveReportingTests(unittest.TestCase):
                 )
             )
 
-    def test_forecast_only_refresh_is_shared_and_clears_failed_cache(self):
+    def test_failed_refresh_keeps_last_good_forecast_while_recent(self):
         coordinator = RachioSupervisorCoordinator(
             self.hass, SimpleNamespace(entry_id="test", title="Test")
         )
@@ -4787,18 +4789,74 @@ class ComprehensiveReportingTests(unittest.TestCase):
         now = datetime(2026, 11, 1, tzinfo=timezone.utc)
         asyncio.run(coordinator._async_refresh_upcoming_runs(self.client, now))
         self.assertEqual(len(calls), 1)
-        self.client.list_upcoming_runs = lambda *_a: {"bad": "shape"}
-        asyncio.run(coordinator._async_refresh_upcoming_runs(self.client, now))
-        self.assertEqual(
-            coordinator._cached_evidence.upcoming_runs_status, "unavailable"
+        flex = next(
+            s for s in coordinator._cached_evidence.schedule_snapshots
+            if s.rule_id == "rule-flex"
         )
-        self.assertEqual(coordinator._cached_evidence.upcoming_runs, ())
-        self.assertTrue(
-            all(
-                s.next_run_at is None
-                for s in coordinator._cached_evidence.schedule_snapshots
+        good_next_run = flex.next_run_at
+        self.assertIsNotNone(good_next_run)
+
+        self.client.list_upcoming_runs = lambda *_a: {"bad": "shape"}
+        asyncio.run(
+            coordinator._async_refresh_upcoming_runs(self.client, now + timedelta(hours=1))
+        )
+        evidence = coordinator._cached_evidence
+        self.assertEqual(evidence.upcoming_runs_status, "stale")
+        self.assertEqual(len(evidence.upcoming_runs), 1)
+        self.assertEqual(evidence.upcoming_runs_updated_at, now.isoformat())
+        self.assertEqual(flex.next_run_at, good_next_run)
+
+        asyncio.run(
+            coordinator._async_refresh_upcoming_runs(self.client, now + timedelta(hours=25))
+        )
+        self.assertEqual(evidence.upcoming_runs_status, "unavailable")
+        self.assertEqual(evidence.upcoming_runs, ())
+        self.assertTrue(all(s.next_run_at is None for s in evidence.schedule_snapshots))
+
+    def test_kept_forecast_drops_runs_that_have_ended(self):
+        coordinator = RachioSupervisorCoordinator(
+            self.hass, SimpleNamespace(entry_id="test", title="Test")
+        )
+        coordinator.hass = self.hass
+        coordinator._cached_evidence = self.evidence()
+
+        async def executor(func, *args):
+            return func(*args)
+
+        self.hass.async_add_executor_job = executor
+        fetched = datetime(2026, 11, 8, 12, tzinfo=timezone.utc)
+        asyncio.run(coordinator._async_refresh_upcoming_runs(self.client, fetched))
+        self.client.list_upcoming_runs = lambda *_a: {"bad": "shape"}
+        # The fixture run ends 2026-11-08 14:03 UTC.
+        asyncio.run(
+            coordinator._async_refresh_upcoming_runs(
+                self.client, datetime(2026, 11, 8, 15, tzinfo=timezone.utc)
             )
         )
+        # Every kept run has ended, so an empty calendar would mislead.
+        self.assertEqual(coordinator._cached_evidence.upcoming_runs_status, "unavailable")
+        self.assertEqual(coordinator._cached_evidence.upcoming_runs, ())
+
+    def test_calendar_stays_available_on_a_kept_forecast(self):
+        evidence = self.evidence()
+        evidence.upcoming_runs_status = "stale"
+        entity = self.calendar.RachioUpcomingRunsCalendar(
+            SimpleNamespace(
+                entry=SimpleNamespace(entry_id="test", title="Test"),
+                data=evidence,
+                last_update_success=True,
+            )
+        )
+        self.assertTrue(entity.available)
+        self.assertEqual(entity.extra_state_attributes["status"], "stale")
+        events = asyncio.run(
+            entity.async_get_events(
+                self.hass,
+                datetime(2026, 11, 1, tzinfo=timezone.utc),
+                datetime(2026, 11, 9, tzinfo=timezone.utc),
+            )
+        )
+        self.assertEqual(len(events), 1)
 
     def test_unknown_zone_id_does_not_fall_back_to_matching_name(self):
         linked = replace(
@@ -4942,6 +5000,176 @@ class ComprehensiveReportingTests(unittest.TestCase):
                 )
             )
 
+
+
+class WeatherFollowupTests(unittest.TestCase):
+    """Rain-source diagnostics and forecast display (issues #2 and #3)."""
+
+    def test_weather_underground_json_error_message_is_extracted(self):
+        body = b'{"metadata":{},"success":false,"errors":[{"error":{"code":"CDN-0001","message":"Invalid apiKey."}}]}'
+        error = urllib.error.HTTPError("https://api.weather.com", 401, "Unauthorized", {}, io.BytesIO(body))
+
+        def refuse(*_args, **_kwargs):
+            raise error
+
+        with patch.object(coordinator_module.urllib.request, "urlopen", refuse):
+            resolution = coordinator_module.resolve_weather_underground_pws_actuals(
+                "IMELBO1", "key"
+            )
+        self.assertIn("HTTP 401: Invalid apiKey.", resolution.reason)
+
+    def test_weather_underground_401_names_the_providers_reason(self):
+        error = urllib.error.HTTPError(
+            "https://api.weather.com", 401, "Unauthorized", {}, io.BytesIO(b"API key is throttled")
+        )
+
+        def refuse(*_args, **_kwargs):
+            raise error
+
+        with patch.object(coordinator_module.urllib.request, "urlopen", refuse):
+            resolution = coordinator_module.resolve_weather_underground_pws_actuals(
+                "IMELBO1", "key"
+            )
+        self.assertEqual(resolution.status, "provider_error")
+        self.assertIn("HTTP 401: API key is throttled", resolution.reason)
+        self.assertIn("Weather Underground account", resolution.reason)
+
+    def test_summary_follows_display_units_and_stored_values_stay_metric(self):
+        outlook = build_rachio_weather_outlook(
+            {"current": {"currentTemperature": 15, "precipIntensity": 2.54}},
+            display_units="US",
+        )
+        self.assertIn("59F", outlook["summary"])
+        self.assertIn("0.1 in/h", outlook["summary"])
+        self.assertEqual(outlook["current"]["temperature_c"], 15)
+        self.assertEqual(outlook["current"]["precip_intensity_mm_per_hour"], 2.54)
+
+    def test_metric_forecast_values_are_rounded_for_display(self):
+        outlook = build_rachio_weather_outlook(
+            {"current": {"currentTemperature": 15.04999, "precipIntensity": 1.23456}}
+        )
+        self.assertEqual(outlook["current"]["temperature_c"], 15.0)
+        self.assertEqual(outlook["current"]["precip_intensity_mm_per_hour"], 1.23)
+        self.assertIn("15C", outlook["summary"])
+
+    def test_an_undated_day_does_not_turn_off_date_selection(self):
+        day = 86400
+        midnight = 1_800_000_000
+        now = datetime.fromtimestamp(midnight + 3600, timezone.utc)
+        outlook = build_rachio_weather_outlook(
+            {
+                "forecast": [
+                    {"time": midnight + day, "weatherSummary": "Tomorrow"},
+                    {"weatherSummary": "Undated"},
+                    {"time": midnight, "weatherSummary": "Today"},
+                ]
+            },
+            now=now,
+        )
+        self.assertEqual(
+            [item["weather_summary"] for item in outlook["forecast"]], ["Today", "Tomorrow"]
+        )
+        self.assertEqual(outlook["next"]["weather_summary"], "Tomorrow")
+
+    def test_forecast_without_current_reports_today_as_now(self):
+        day = 86400
+        midnight = 1_800_000_000
+        now = datetime.fromtimestamp(midnight + 3600, timezone.utc)
+        outlook = build_rachio_weather_outlook(
+            {
+                "forecast": [
+                    {"time": midnight, "weatherSummary": "Today", "temperatureMax": 20},
+                    {"time": midnight + day, "weatherSummary": "Tomorrow"},
+                ]
+            },
+            now=now,
+        )
+        self.assertEqual(outlook["current"]["weather_summary"], "Today")
+        self.assertIn("Now: Today", outlook["summary"])
+
+    def test_translations_ship_the_config_strings(self):
+        base = Path(coordinator_module.__file__).parent
+        self.assertEqual(
+            json.loads((base / "translations" / "en.json").read_text()),
+            json.loads((base / "strings.json").read_text()),
+        )
+
+
+class CoordinatorUpdateTests(unittest.TestCase):
+    """Drive the coordinator's real update with the Rachio evidence fetch replaced."""
+
+    def setUp(self):
+        self.fixture = ComprehensiveReportingTests("test_valid_empty_forecast_is_available")
+        self.fixture.setUp()
+        # Home Assistant's clock is timezone-aware; the shared stub's is not.
+        now = datetime(2026, 11, 1, tzinfo=timezone.utc)
+        clock = patch.object(coordinator_module.dt_util, "now", lambda *_a: now)
+        clock.start()
+        self.addCleanup(clock.stop)
+        self.good = self.fixture.evidence()
+        self.builds = []
+
+        async def executor(func, *args):
+            return func(*args)
+
+        async def no_service(*_args, **_kwargs):
+            return None
+
+        linked_entry = SimpleNamespace(
+            entry_id="rachio",
+            title="Rachio",
+            state=coordinator_module.ConfigEntryState.LOADED,
+            data={"api_key": "key"},
+        )
+        self.hass = SimpleNamespace(
+            states=SimpleNamespace(get=lambda _id: None, async_all=lambda *_a: []),
+            config=SimpleNamespace(
+                path=lambda *parts: "/nonexistent/" + "/".join(parts),
+                units=SimpleNamespace(temperature_unit="\u00b0F"),
+            ),
+            config_entries=SimpleNamespace(async_get_entry=lambda _id: linked_entry),
+            async_add_executor_job=executor,
+            services=SimpleNamespace(async_call=no_service),
+        )
+        entry = SimpleNamespace(
+            entry_id="supervisor",
+            title="Test",
+            data={
+                "rachio_config_entry_id": "rachio",
+                "rain_source_mode": "none",
+                "enable_persistent_notifications": False,
+            },
+            options={},
+        )
+        self.coordinator = RachioSupervisorCoordinator(self.hass, entry)
+        self.coordinator.hass = self.hass
+
+    def update_with(self, evidence):
+        def build(*args, **kwargs):
+            self.builds.append(kwargs)
+            return evidence
+
+        self.coordinator._last_reconciliation = None
+        with patch.object(coordinator_module, "build_rachio_evidence", build), patch.object(
+            coordinator_module, "discover_linked_entities", lambda *_a: self.fixture.linked
+        ):
+            return asyncio.run(self.coordinator._async_update_data())
+
+    def test_forecast_and_display_units_reach_the_evidence_fetch(self):
+        self.update_with(self.good)
+        self.assertEqual(self.builds[-1]["forecast_units"], "US")
+        self.assertEqual(self.builds[-1]["display_units"], "US")
+
+    def test_failed_forecast_in_a_full_reconcile_keeps_the_last_good_one(self):
+        self.assertEqual(self.update_with(self.good).upcoming_runs_status, "available")
+        failed = self.fixture.evidence()
+        failed.upcoming_runs = ()
+        failed.upcoming_runs_status = "unavailable"
+        failed.upcoming_runs_updated_at = None
+        snapshot = self.update_with(failed)
+        self.assertEqual(snapshot.upcoming_runs_status, "stale")
+        self.assertEqual(len(snapshot.upcoming_runs), 1)
+        self.assertEqual(snapshot.upcoming_runs_updated_at, self.good.upcoming_runs_updated_at)
 
 if __name__ == "__main__":
     unittest.main()

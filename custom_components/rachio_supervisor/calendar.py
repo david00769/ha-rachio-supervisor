@@ -64,7 +64,7 @@ class RachioUpcomingRunsCalendar(RachioSupervisorEntity, CalendarEntity):
     def available(self) -> bool:
         return (
             self.coordinator.last_update_success
-            and self.coordinator.data.upcoming_runs_status == "available"
+            and self.coordinator.data.upcoming_runs_status in {"available", "stale"}
         )
 
     @property

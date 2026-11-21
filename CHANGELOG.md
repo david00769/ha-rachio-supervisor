@@ -1,5 +1,22 @@
 # Changelog
 
+## Unreleased
+
+- A failed `upcoming_runs` refresh no longer blanks every zone's next run and
+  the calendar: the last good forecast stays for up to 24 hours, marked
+  `stale` with its fetch time; runs that have ended drop out, and once none
+  are left it reads unavailable rather than an empty calendar (#3).
+- Weather Underground errors now carry the provider's own message, so a
+  throttled key ("API key is throttled") is told apart from a wrong one.
+- Config and options screens show their labels: the integration now ships
+  `translations/en.json` (#2).
+- The weather summary is written in Home Assistant's units (59F, 0.1 in/h on a
+  US system); stored `*_c` and `*_mm` values stay metric. Metric values are
+  rounded like converted ones (#2).
+- A forecast day without a date is left out instead of turning off date
+  selection for the rest, and a forecast with no `current` reports today as
+  "Now" (#2).
+
 ## 0.2.13 - 2026-11-21
 
 - Added Flex schedule discovery (`flexScheduleRules`) alongside fixed schedules.
