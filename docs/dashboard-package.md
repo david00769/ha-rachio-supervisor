@@ -146,7 +146,7 @@ what watered, and Flex predictions move with the weather.
 The integration ships the `rachio-supervisor-zone-grid-card` Lovelace module
 for this purpose. Add this dashboard resource:
 
-`/rachio_supervisor/rachio-supervisor-zone-grid-card.js?v=0.2.13`
+`/rachio_supervisor/rachio-supervisor-zone-grid-card.js?v=0.2.14`
 
 Resource type:
 

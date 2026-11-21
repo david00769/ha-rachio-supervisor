@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.2.14 - 2026-11-22
 
 - A failed `upcoming_runs` refresh no longer blanks every zone's next run and
   the calendar: the last good forecast stays for up to 24 hours, marked
