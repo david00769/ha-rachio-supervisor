@@ -81,8 +81,10 @@ When no local gauge is available, the runtime remains international by design:
 operators can map any numeric observed-rain source. The resolver accepts common
 daily and regional fields such as `rain_today`, `rain_since_9am`,
 `precipTotal`, `precipitation_today`, and `observed_precipitation`. Australian
-installations can use a BOM/WillyWeather-derived custom integration if it
-publishes observational rainfall sensors. The source window is exposed
+installations can use the community Bureau of Meteorology integration
+(`bremor/bureau_of_meteorology`), whose nearest-station `Rain Since 9am`
+observation sensor resolves as window `since_9am`, confidence medium; this was
+run live on 2026-11-21. The source window is exposed
 separately as `24h`, `today`, `since_9am`, `last_hour`, or another explicit
 window so the dashboard does not pretend every source is rolling 24h.
 
@@ -98,7 +100,10 @@ the operator selects the PWS source mode, enters a station ID and API key, and
 the coordinator polls the station's current `precipTotal` directly. Station
 `precipTotal` values are daily totals unless the source explicitly publishes a
 rolling 24h total. This is intentionally a user-selected override, not data
-inferred from the Rachio controller.
+inferred from the Rachio controller. Weather Underground issues free keys only
+to owners of an uploading station, and a throttled key answers HTTP 401 with
+`API key is throttled`; the resolver puts the provider's message (parsed from
+its JSON error body when present) into the rain sensor's `reason`.
 
 Rachio weather data is handled separately. The public forecast endpoint is
 queried to expose source/provider hints and a read-only `Heat assist` weather
@@ -122,6 +127,36 @@ The forecast payload needs care, based on live sampling of one metric account
   shown as now only when it is today, because `currentTemperature` appears only on
   that node; otherwise now falls back to today's range.
 
+## Upcoming runs and physical zones
+
+Rachio's `GET /public/device/{id}/upcoming_runs` returns a rolling 14-day
+forecast of predicted runs and predicted skips. `reporting.py` normalises it
+(dated runs, per-zone watering seconds, elapsed window, cycle/soak, skip
+reasons) and refuses a malformed payload rather than dropping records.
+
+- A full evidence reconciliation fetches it with everything else; between
+  reconciliations a forecast-only request refreshes it at most every 15
+  minutes. The calendar and the zone rows read the same coordinator cache, so
+  opening a card adds no request.
+- A failed refresh keeps the last good forecast for up to 24 hours as `stale`,
+  with its original fetch time, dropping runs that have ended; when none are
+  left, or the forecast is older, the status is `unavailable` with no runs, so
+  an empty calendar is never shown as a quiet fortnight. Unloading the linked
+  Rachio entry clears it.
+- Each schedule's `next_run_at` comes only from this forecast; no date is
+  derived from schedule rules or Home Assistant attributes.
+
+`Zone overview` projects one row per enabled physical zone, whether or not an
+enabled schedule references it, from fixed `scheduleRules` and Flex
+`flexScheduleRules` alike, deduplicated by vendor id. A row lists every schedule
+the zone belongs to and takes its duration from the next predicted run, or from
+its only schedule; a multi-zone schedule's total is never one zone's default.
+A schedule-level moisture mapping is not shown on one member of a multi-zone
+schedule. Schedule and zone entities are matched by registry unique-id suffix
+(`-schedule-<id>`, `-zone-<id>`, as Home Assistant's Rachio integration sets
+them), never by name, and Quick Run by zone entity requires exactly one
+resolved physical zone.
+
 ## Moisture write boundary
 
 Moisture write-back updates Rachio's zone moisture estimate. It never starts
@@ -131,7 +166,9 @@ Mapped moisture sensors are resolved as dated observations before they are used
 for review or write-back. The coordinator keeps a runtime cache of the last
 valid numeric sample per mapped entity so temporary `unknown` or `unavailable`
 states from sleeping MQTT/Zigbee probes do not erase useful evidence. Current
-numeric state always wins over the cache.
+numeric state always wins over the cache. The cache is in memory, so after a
+Home Assistant restart a sleeping probe reads `unknown` until it reports again,
+unless its bridge retains the last value (Zigbee2MQTT `retain`).
 
 Freshness is explicit:
 

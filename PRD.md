@@ -214,7 +214,10 @@ Accepted v1 actual-rain source:
   rainfall or precipitation total
 - a configured Weather Underground / The Weather Company PWS station override
   when the user provides a station ID and API key; this is treated as a
-  user-selected observed-rain source, not as data inferred from Rachio
+  user-selected observed-rain source, not as data inferred from Rachio; free
+  Weather Underground keys are issued only to owners of an uploading station,
+  so a Home Assistant rain entity (a local gauge, or a regional observation
+  service such as the Bureau of Meteorology) is the default recommendation
 
 Forecast integrations are not the core story in v1. The important distinction
 is:
@@ -254,7 +257,11 @@ Planned first-class entities:
 - active flow alerts
 - flow alert review queue
 - last flow alert decision
-- per-zone status
+- per-zone status, one row per enabled physical zone with every schedule it
+  belongs to
+- an `Upcoming runs` calendar of Rachio's 14-day forecast with predicted skips;
+  predictions, never execution evidence, kept up to 24 hours as `stale` when a
+  refresh fails
 - per-zone reason/explanation
 - per-zone moisture band
 - per-zone catch-up candidate / decision state

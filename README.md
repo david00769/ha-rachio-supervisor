@@ -18,6 +18,28 @@ This repository is the initial public seed:
 - HACS custom integration scaffold
 - recommended Lovelace dashboard package
 
+## What's new in 0.2.13 and 0.2.14
+
+- **Flex schedules** are discovered alongside fixed schedules, and schedules and
+  zones are matched to Home Assistant entities by registry id instead of name.
+- **One row per physical zone** in `Zone overview`, listing every schedule the
+  zone belongs to, with its own watering duration from the next predicted run.
+- **`Upcoming runs` calendar**: Rachio's official 14-day forecast, with
+  predicted skips and their reasons, for any native Calendar card. Next runs
+  everywhere now come from this forecast.
+- **A failed forecast refresh no longer blanks the dashboard**: the last good
+  forecast stays up to 24 hours, marked `stale` with its fetch time.
+- **Clearer rain-source errors**: a Weather Underground failure carries the
+  provider's own message, so `API key is throttled` is told apart from a bad
+  key.
+- **Settings screens show their labels** (the integration ships
+  `translations/en.json`), and the weather summary is written in Home
+  Assistant's units and rounded.
+
+Thanks to [lunaroja](https://github.com/lunaroja) for the Flex, physical-zone
+and calendar work, and for the forecast-units fix in 0.2.12. Details are in the
+[changelog](CHANGELOG.md).
+
 The integration now includes the first cron-replacement runtime path while
 still keeping the default install observe-first:
 
@@ -294,10 +316,14 @@ real Home Assistant instance without forcing optional inputs too early.
   observed total; the resolver understands common attribute names such as
   `rain_today`, `rain_since_9am`, `precipTotal`,
   `precipitation_today`, and `observed_precipitation`
-- Australian users without a local gauge can use a BOM/WillyWeather-derived
-  custom integration if it exposes a numeric observed rainfall sensor; the
-  dashboard labels the source window honestly, such as `since_9am` or `today`,
-  instead of pretending every source is rolling 24h
+- Australian users without a local gauge can use the community
+  [Bureau of Meteorology](https://github.com/bremor/bureau_of_meteorology)
+  integration (HACS). Enable its observations, select the nearest station's
+  `Rain Since 9am` sensor as the rain source, and the supervisor reads it with
+  window `since_9am` and medium confidence. This route has been run live. Any
+  other integration that exposes a numeric observed rainfall sensor works the
+  same way; the dashboard labels the source window honestly, such as
+  `since_9am` or `today`, instead of pretending every source is rolling 24h
 - Weather Underground / The Weather Company PWS stations can be used when Home
   Assistant exposes the station's observed total through a REST or custom
   sensor. A station `precipTotal` value is treated as a daily observed total
@@ -310,7 +336,11 @@ real Home Assistant instance without forcing optional inputs too early.
   integration options, enter the station ID and API key, and the supervisor will
   poll the station's current `precipTotal` directly. Diagnostics redact the
   saved key. This is a station-specific observed-rain override and is not
-  discovered from the Rachio controller.
+  discovered from the Rachio controller. Since 2019 Weather Underground issues
+  free API keys only to owners of a personal weather station that uploads to
+  it; a key whose station has stopped uploading, or that is over its limit,
+  answers `401 API key is throttled`, and the rain sensor's `reason` says so.
+  Without a station of your own, use a Home Assistant rain entity instead.
 - Rachio's public forecast endpoint is used for source/provider hints and the
   read-only `Heat assist` outlook. Forecast precipitation is not treated as
   observed rainfall unless a future API payload exposes a clearly observed
@@ -324,6 +354,13 @@ real Home Assistant instance without forcing optional inputs too early.
   helper/automation state so the candidate list stays focused on actual
   sensor or weather entities
 - candidate moisture sensors are optional during initial setup and options edits
+- each schedule maps to one moisture sensor; a zone with two probes uses the
+  one you pick
+- sleeping Zigbee probes (for example COOLO CS-201Z through Zigbee2MQTT) read
+  `unknown` after a Home Assistant restart until each reports again, because
+  the supervisor's last-sample cache does not survive a restart. Turning on
+  `retain` for those devices in Zigbee2MQTT keeps their last value across
+  restarts
 - if no moisture sensors are selected, the flow skips the schedule moisture
   mapping step entirely and stores an empty explicit mapping instead of showing
   an empty form
@@ -510,6 +547,14 @@ Today the custom integration provides a narrow but real runtime:
   - review
   - catch-up candidate
 
+- a site-level `Zone overview` sensor with one row per enabled physical zone,
+  including zones in no enabled schedule, and each zone's schedules, per-zone
+  durations, next run, predicted skips and forecast status (`available`,
+  `stale` or `unavailable`)
+- a read-only `Upcoming runs` calendar entity from Rachio's 14-day
+  `upcoming_runs` forecast, refreshed at most every 15 minutes and shared with
+  the zone rows; its dates are predictions, not watering evidence
+
 This milestone is still intentionally narrow. It does not execute automatic
 moisture-assisted watering. Moisture support currently means candidate sensor
 selection, explicit per-schedule mapping, dated moisture evidence with
@@ -549,13 +594,17 @@ Initial HACS packaging is in place via:
 - `hacs.json`
 - `custom_components/rachio_supervisor/manifest.json`
 
-Use `v0.2.14` or newer for HACS installs. That build includes the production
-dashboard cutover fixes, heat-assist outlook, stricter actual-rain source
-handling, schedule-rule zone matching, forced fresh evidence on
-`evaluate_now`, options-flow hardening,
-packaged placeholder fallback, and photo import diagnostics.
-It also includes the explicit Weather Underground PWS station override for
-observed-rain sourcing.
+Use `v0.2.14` or newer for HACS installs. That build adds Flex schedule
+discovery, physical zone rows, the `Upcoming runs` calendar, the kept
+forecast on a failed refresh, provider messages in rain-source errors,
+translated settings screens, and forecast display in Home Assistant's units,
+on top of the dashboard cutover fixes, heat-assist outlook, actual-rain source
+handling, forced fresh evidence on `evaluate_now`, options-flow hardening,
+photo import diagnostics and the Weather Underground PWS station override.
+
+Install and update through HACS rather than copying files: HACS only knows the
+version it installed itself, so a manual copy leaves it offering an update for
+a version that is already running.
 
 ## Known limitations
 
@@ -568,6 +617,14 @@ observed-rain sourcing.
 - Photo import is opt-in and read-only.
 - Manual local photo overrides always win over imported Rachio photos.
 - Unresolved Rachio zones fall back to the packaged placeholder.
+- `Upcoming runs` is Rachio's rolling two-week forecast, not a history of what
+  watered; it omits runs already started, and Flex predictions move with the
+  weather.
+- Each schedule maps to one moisture sensor.
+- Forecast-unit behaviour on a US Rachio account is unverified
+  ([#2](https://github.com/david00769/ha-rachio-supervisor/issues/2)).
+- Dropdown choices in the settings screens (rain source, forecast units) are
+  not yet translated; field labels are.
 
 ## License
 
